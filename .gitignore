@@ -1,0 +1,41 @@
+# Data (user-generated, not part of the package)
+data/
+pbp_cache/
+checkpoints/
+
+# Logs
+*.log
+nohup.out
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Test / tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# macOS
+.DS_Store
+
+# LaTeX source and build artifacts (kept local)
+*.tex
+*.pdf
+*.aux
+*.out
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+
+# Root-level scratch / prototype scripts (not part of the package)
+deep_rapm_model.py
+example.py
+lineup_gnn.py
+modules.py
+set_transformer.py
+simulate_q2.py

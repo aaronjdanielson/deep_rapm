@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "deep-rapm"
+version = "0.1.0"
+description = "Regularized Adjusted Plus-Minus (RAPM) for NBA possession data — analytical ridge regression with recency weighting and a cross-attention neural model for lineup interaction effects."
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+dependencies = [
+    "pandas>=2.0",
+    "numpy>=1.24",
+    "pyarrow>=14.0",
+    "nba-api>=1.4",
+    "pbpstats>=1.0",
+    "tqdm>=4.66",
+    "scipy>=1.11",
+]
+
+[project.optional-dependencies]
+neural = [
+    "torch>=2.1",
+    "scikit-learn>=1.3",
+]
+dev = [
+    "pytest>=7.4",
+    "black>=23.12",
+]
+
+[project.scripts]
+collect-possessions = "deep_rapm.scripts.collect:main"
+collect-players     = "deep_rapm.scripts.collect_players:main"
+solve-rapm          = "deep_rapm.scripts.solve_rapm:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["deep_rapm*"]
+
+[tool.setuptools.package-data]
+"deep_rapm" = []
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "network: test calls the NBA Stats API — skip offline with -m 'not network'",
+]
