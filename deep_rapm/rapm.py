@@ -123,9 +123,15 @@ def build_rapm_matrix(
     data_dir: Path,
     seasons: list[str],
     player_vocab: pd.DataFrame,
+    include_playoffs: bool = False,
 ) -> tuple[sp.csr_matrix, np.ndarray, np.ndarray, np.ndarray]:
     """
     Build the sparse RAPM indicator matrix from season possession parquets.
+
+    Parameters
+    ----------
+    include_playoffs : If True, also load ``possessions_*_playoffs.parquet``
+                       files alongside the regular season parquets.
 
     Returns
     -------
@@ -137,13 +143,18 @@ def build_rapm_matrix(
     frames: list[pd.DataFrame] = []
     for season in seasons:
         season_dir = Path(data_dir) / season
-        parquets = sorted(season_dir.glob("possessions_*.parquet"))
+        all_parquets = sorted(season_dir.glob("possessions_*.parquet"))
+        if include_playoffs:
+            parquets = all_parquets
+        else:
+            parquets = [p for p in all_parquets if "playoffs" not in p.name]
         if not parquets:
             raise FileNotFoundError(
                 f"No possession parquet found in {season_dir}. "
                 f"Run collect-possessions --season {season} first."
             )
-        frames.append(pd.read_parquet(parquets[0]))
+        for p in parquets:
+            frames.append(pd.read_parquet(p))
 
     df = pd.concat(frames, ignore_index=True)
     return _build_matrix_from_df(df, player_vocab)
@@ -174,6 +185,52 @@ def _recency_weights(df: pd.DataFrame, half_life_days: float) -> np.ndarray:
     latest = dates.max()
     days_ago = (latest - dates).dt.total_seconds() / 86_400
     return np.power(0.5, days_ago.values / half_life_days)
+
+
+def _competition_weights(
+    df: pd.DataFrame,
+    sigma: Optional[float] = None,
+    p_target: float = 95.0,
+    w_target: float = 0.05,
+) -> np.ndarray:
+    """
+    Compute per-possession competition weights.
+
+    Possessions played in blowouts carry less information about true player
+    quality.  We down-weight by a Gaussian kernel on the absolute score
+    differential:
+
+        w_comp(d) = exp(−(d / σ)²)
+
+    σ is calibrated so that w_comp(d_p) = w_target where d_p is the
+    p_target-th percentile of |score_diff| in df:
+
+        σ = d_p / √(−ln w_target)
+
+    Defaults (p_target=95, w_target=0.05) set σ ≈ 13.9 given the empirical
+    p95 ≈ 24 pts, yielding:
+        d=0   → 1.00
+        d=7   → 0.78  (median possession)
+        d=12  → 0.47  (p75)
+        d=19  → 0.16  (p90)
+        d=24  → 0.05  (p95, ≈ "basically zero")
+
+    Parameters
+    ----------
+    df       : DataFrame with a ``score_diff`` column (signed, offense − defense).
+    sigma    : Explicit scale parameter (pts).  If None, auto-calibrated from df.
+    p_target : Percentile at which w_comp = w_target (default 95).
+    w_target : Target weight at d_p (default 0.05).
+
+    Returns
+    -------
+    ndarray (n_poss,) float64 — weights in (0, 1].
+    """
+    d = np.abs(df["score_diff"].values).astype(np.float64)
+    if sigma is None:
+        d_p = float(np.percentile(d, p_target))
+        sigma = d_p / np.sqrt(-np.log(w_target))
+    return np.exp(-(d / sigma) ** 2)
 
 
 # ---------------------------------------------------------------------------
@@ -244,6 +301,8 @@ def fit_rapm(
     max_workers: int = 4,
     # Recency weighting:
     half_life_days: Optional[float] = None,
+    # Playoffs:
+    include_playoffs: bool = False,
 ) -> pd.DataFrame:
     """
     Fit ridge RAPM and return a DataFrame of player estimates.
@@ -270,6 +329,8 @@ def fit_rapm(
     max_workers       : Parallel workers for fetching games (date-range mode).
     half_life_days    : Half-life for exponential recency weighting (days).
                         None = equal weighting.  E.g. 365 = 1-year half-life.
+    include_playoffs  : If True, include playoff possessions alongside regular
+                        season data.  Default False.
 
     Returns
     -------
@@ -302,7 +363,7 @@ def fit_rapm(
         if verbose:
             print(f"Loading {len(seasons)} season(s)…")
         t0 = time.time()
-        X, y, n_off, n_def = build_rapm_matrix(data_dir, seasons, player_vocab)
+        X, y, n_off, n_def = build_rapm_matrix(data_dir, seasons, player_vocab, include_playoffs=include_playoffs)
         df_for_weights = None   # no game_date column handy in this path
         if verbose:
             print(f"  {len(y):,} possessions  mean={y.mean():.3f}  std={y.std():.3f}"
@@ -336,10 +397,10 @@ def fit_rapm(
             frames_for_dates: list[pd.DataFrame] = []
             for season in seasons:  # type: ignore[union-attr]
                 season_dir = Path(data_dir) / season
-                parquets = sorted(season_dir.glob("possessions_*.parquet"))
-                frames_for_dates.append(
-                    pd.read_parquet(parquets[0], columns=["game_date"])
-                )
+                all_pq = sorted(season_dir.glob("possessions_*.parquet"))
+                pq_list = all_pq if include_playoffs else [p for p in all_pq if "playoffs" not in p.name]
+                for p in pq_list:
+                    frames_for_dates.append(pd.read_parquet(p, columns=["game_date"]))
             df_dates = pd.concat(frames_for_dates, ignore_index=True)
             weights = _recency_weights(df_dates, half_life_days)
         else:

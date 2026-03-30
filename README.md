@@ -173,7 +173,7 @@ where $d_i$ is days before the most recent possession. The weighted normal equat
 
 $$\bigl(X^\top W X + \alpha I\bigr)\,\beta = X^\top W y_c$$
 
-with $W = \operatorname{diag}(w)$, computed efficiently as $(X \odot \sqrt{w})^\top (X \odot \sqrt{w})$.
+with $W = \mathrm{diag}(w)$, computed efficiently as $(X \odot \sqrt{w})^\top (X \odot \sqrt{w})$.
 
 **Reported values** (per 100 possessions):
 

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "deep-rapm"
-version = "0.1.1"
+version = "0.1.2"
 description = "Regularized Adjusted Plus-Minus (RAPM) for NBA possession data — analytical ridge regression with recency weighting and a cross-attention neural model for lineup interaction effects."
 readme = "README.md"
 license = { file = "LICENSE" }
