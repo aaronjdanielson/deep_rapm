@@ -144,43 +144,97 @@ Damian Lillard          +7.44   -0.52   +6.93
 
 ## Model
 
-Each possession $i$ is labelled by which players are on the court. Define the
-indicator matrix $X \in \{0,1\}^{n \times 2p}$ where $p$ is the number of
-players: the first $p$ columns are offense indicators and the last $p$ columns
-are defense indicators. Each row has exactly 10 ones — one per player on the
-court.
+We model possession-level outcomes using a ridge-regularized linear model over player participation.
 
-The predicted points scored on possession $i$ is
+Let:
+- $y_i \in \mathbb{R}$ denote the outcome for possession $i$ (e.g., points scored),
+- $X \in \mathbb{R}^{n \times 2P}$ be the design matrix,
+- $\beta \in \mathbb{R}^{2P}$ be player coefficients.
 
-$$\hat{y}_i = \mu + \sum_{j \in \text{off}(i)} \alpha_j + \sum_{k \in \text{def}(i)} \delta_k = \mu + X_i \beta$$
+Each row $X_i$ encodes the 10 players on the court:
+- 5 offensive players (indicator = 1 in offense block),
+- 5 defensive players (indicator = 1 in defense block).
 
-where $\beta = [\alpha_1, \ldots, \alpha_p, \delta_1, \ldots, \delta_p]^\top$
-collects the offensive and defensive parameters.
+Thus, each row of $X$ contains exactly 10 ones.
 
-**Unweighted ridge.** Fit by minimising
+We partition coefficients as:
 
-$$\mathcal{L}(\beta) = \|y_c - X\beta\|^2 + \alpha \|\beta\|^2$$
+$$\beta = \begin{bmatrix} \theta^{\text{off}} \\ \theta^{\text{def}} \end{bmatrix}, \quad \theta^{\text{off}}, \theta^{\text{def}} \in \mathbb{R}^P.$$
 
-where $y_c = y - \mu$ is mean-centred. The normal equations are
+---
 
-$$\bigl(X^\top X + \alpha I\bigr)\beta = X^\top y_c$$
+### Linear Model
 
-**Recency-weighted ridge.** With half-life $\tau$ (days), each possession is weighted by its age:
+We model:
 
-$$w_i = 0.5^{\,d_i / \tau}$$
+$$y = \mu \mathbf{1} + X \beta + \varepsilon,$$
 
-where $d_i$ is days before the most recent possession. The weighted normal equations are
+where:
+- $\mu \in \mathbb{R}$ is an intercept (not penalized),
+- $\varepsilon \sim (0, \sigma^2 I)$.
 
-$$\bigl(X^\top W X + \alpha I\bigr)\beta = X^\top W y_c$$
+Equivalently, at the possession level:
 
-with $W = \mathrm{diag}(w)$, computed efficiently as $(X \odot \sqrt{w})^\top (X \odot \sqrt{w})$.
+$$\hat{y}_i = \mu + \sum_{j \in \text{off}(i)} \theta^{\text{off}}_j + \sum_{k \in \text{def}(i)} \theta^{\text{def}}_k.$$
 
-**Reported values** (per 100 possessions):
+---
 
-$$\text{ORAPM}_j = 100 \cdot \alpha_j \qquad \text{DRAPM}_k = -100 \cdot \delta_k \qquad \text{RAPM} = \text{ORAPM} + \text{DRAPM}$$
+### Weighted Ridge Estimation
 
-The sign flip on DRAPM makes positive values mean good defender — a defender
-who suppresses scoring has $\delta_k < 0$, so $\text{DRAPM}_k > 0$.
+To incorporate recency or importance weighting, let:
+
+$$W = \mathrm{diag}(w_1, \dots, w_n), \quad w_i > 0.$$
+
+We estimate parameters via:
+
+$$\min_{\mu, \beta} \; (y - \mu \mathbf{1} - X \beta)^\top W (y - \mu \mathbf{1} - X \beta) + \lambda \|\beta\|_2^2,$$
+
+where:
+- $\lambda > 0$ is the ridge penalty,
+- the intercept $\mu$ is **not penalized**.
+
+---
+
+### Closed-Form Solution
+
+Define the weighted mean:
+
+$$\bar{y}_w = \frac{\sum_i w_i y_i}{\sum_i w_i}, \quad \bar{X}_w = \frac{\sum_i w_i X_i}{\sum_i w_i}.$$
+
+Center the data:
+
+$$\tilde{y} = y - \bar{y}_w, \quad \tilde{X} = X - \bar{X}_w.$$
+
+Then:
+
+$$\hat{\beta} = (\tilde{X}^\top W \tilde{X} + \lambda I)^{-1} \tilde{X}^\top W \tilde{y},$$
+
+$$\hat{\mu} = \bar{y}_w - \bar{X}_w^\top \hat{\beta}.$$
+
+---
+
+### Interpretation (RAPM)
+
+We report player impacts scaled per 100 possessions:
+
+$$\text{ORAPM}_j = 100 \cdot \theta^{\text{off}}_j, \quad \text{DRAPM}_j = -100 \cdot \theta^{\text{def}}_j.$$
+
+The negative sign in DRAPM arises because:
+- $\theta^{\text{def}}_j$ represents contribution to **opponent scoring**,
+- strong defenders have $\theta^{\text{def}}_j < 0$.
+
+Thus, higher DRAPM corresponds to better defense.
+
+---
+
+### Summary
+
+| Component | Role |
+|-----------|------|
+| Offense coefficients $\theta^{\text{off}}$ | Increase scoring |
+| Defense coefficients $\theta^{\text{def}}$ | Decrease opponent scoring |
+| Ridge penalty $\lambda$ | Stabilizes estimates under collinearity |
+| Weights $w_i$ | Time-decay or importance weighting |
 
 ---
 
