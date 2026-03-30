@@ -163,7 +163,7 @@ $$\mathcal{L}(\beta) = \|y_c - X\beta\|^2 + \alpha \|\beta\|^2$$
 
 where $y_c = y - \mu$ is mean-centred. The normal equations are
 
-$$\bigl(X^\top X + \alpha I\bigr)\,\beta = X^\top y_c$$
+$$\bigl(X^\top X + \alpha I\bigr)\beta = X^\top y_c$$
 
 **Recency-weighted ridge.** With half-life $\tau$ (days), each possession is weighted by its age:
 
@@ -171,7 +171,7 @@ $$w_i = 0.5^{\,d_i / \tau}$$
 
 where $d_i$ is days before the most recent possession. The weighted normal equations are
 
-$$\bigl(X^\top W X + \alpha I\bigr)\,\beta = X^\top W y_c$$
+$$\bigl(X^\top W X + \alpha I\bigr)\beta = X^\top W y_c$$
 
 with $W = \mathrm{diag}(w)$, computed efficiently as $(X \odot \sqrt{w})^\top (X \odot \sqrt{w})$.
 
