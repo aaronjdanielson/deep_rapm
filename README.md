@@ -145,16 +145,41 @@ Damian Lillard          +7.44   -0.52   +6.93
 
 ## Rolling RAPM
 
-`fit_rolling_rapm` fits RAPM at a sequence of evaluation dates using **incremental Gram matrix updates** — instead of rebuilding $X^\top W X$ from the full possession history at every date, it maintains the normal equations as running state and advances them forward in time. Each date step costs $O(k \cdot P^2)$ where $k$ is the number of new possessions (≈1,500/day) vs $O(n \cdot P^2)$ for a full recompute — roughly **650× fewer floating-point operations** per step.
+`fit_rolling_rapm` fits RAPM at a sequence of evaluation dates using **incremental Gram matrix updates** — instead of rebuilding $X^\top W X$ from the full possession history at every date, it maintains the weighted normal equations as running state and advances them forward in time.
 
-Weights combine exponential recency decay with a competition weight that down-weights blowout possessions:
+### Incremental algorithm
 
-$$w_i = 0.5^{\text{days\_ago}_i / H} \cdot \exp\!\left(-\left(\tfrac{|\text{score\_diff}_i|}{\sigma}\right)^2\right)$$
+Each possession $i$ carries a combined weight:
+
+$$w_i(t) = \underbrace{0.5^{\,\Delta_i / H}}_{\text{recency}} \cdot \underbrace{\exp\!\left(-\tfrac{d_i^2}{\sigma^2}\right)}_{\text{competition}}$$
+
+where $\Delta_i$ is the age of possession $i$ in days at evaluation date $t$, $H$ is the half-life, $d_i$ is the absolute score differential of the game, and $\sigma$ is calibrated to the 95th-percentile score differential.
+
+The state maintained by `IncrementalGramState` is:
+
+$$G(t) = X^\top W(t) X, \quad b(t) = X^\top W(t) y$$
+
+When the evaluation date advances by $\Delta$ days, all existing weights decay by $\gamma = 0.5^{\Delta/H}$, giving a closed-form update:
+
+$$G(t+\Delta) = \gamma \cdot G(t) + X_{\text{new}}^\top W_{\text{new}} X_{\text{new}}$$
+
+$$b(t+\Delta) = \gamma \cdot b(t) + X_{\text{new}}^\top W_{\text{new}} y_{\text{new}}$$
+
+At each evaluation date, RAPM is recovered by solving the ridge system:
+
+$$\hat\beta = \bigl(G(t) + \alpha I\bigr)^{-1}\bigl(b(t) - \hat\mu \cdot b_1(t)\bigr), \quad \hat\mu = \frac{\sum_i w_i y_i}{\sum_i w_i}$$
+
+where $b_1(t) = X^\top W(t) \mathbf{1}$ accumulates the weighted column sums for intercept centering.
+
+Each date step costs $O(k \cdot P^2)$ where $k$ is new possessions since the last step (≈1,500/day) vs $O(n \cdot P^2)$ for a full recompute over all $n$ historical possessions — roughly **650× fewer floating-point operations** per step.
 
 ### CLI
 
 ```bash
-python rolling_rapm.py --step-days 7 --half-life 365 --top 20 --ci-window 12 --output rolling_rapm.png --cache rolling_cache.parquet
+# requires: pip install "deep-rapm[viz]"
+rolling-rapm --step-days 7 --half-life 365 --top 20 --output rolling_rapm.png
+rolling-rapm --step-days 7 --half-life 360 --top 12 --alpha 5000 --output rolling_rapm.png
+rolling-rapm --cache rolling_cache.parquet --metric orapm  # cache results and plot orapm
 ```
 
 ### Python API
@@ -185,6 +210,7 @@ print(df[df["date"] == df["date"].max()].nlargest(10, "rapm"))
 | `alpha` | 2000 | Ridge penalty |
 | `warmup_days` | 180 | Skip first N days (insufficient data) |
 | `min_poss` | 100 | Min possessions to include a player at a given date |
+| `include_playoffs` | False | Include playoff possessions |
 
 ---
 
@@ -253,9 +279,9 @@ $$\tilde{y} = y - \bar{y}_w, \quad \tilde{X} = X - \bar{X}_w.$$
 
 Then:
 
-$$\hat{\beta} = (\tilde{X}^\top W \tilde{X} + \lambda I)^{-1} \tilde{X}^\top W \tilde{y},$$
+$$\hat{\beta} = (\tilde{X}^\top W \tilde{X} + \lambda I)^{-1} \tilde{X}^\top W \tilde{y}$$
 
-$$\hat{\mu} = \bar{y}_w - \bar{X}_w^\top \hat{\beta}.$$
+$$\hat{\mu} = \bar{y}_w - \bar{X}_w^\top \hat{\beta}$$
 
 ---
 
