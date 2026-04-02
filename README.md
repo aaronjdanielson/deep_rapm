@@ -15,6 +15,7 @@ RAPM estimates each player's contribution per 100 possessions, controlling for t
 - **Possession collection** — pull and cache play-by-play data from the NBA Stats API
 - **Player metadata** — build a player vocabulary with position information
 - **Analytical RAPM** — exact ridge regression via the weighted normal equations
+- **Rolling RAPM** — incremental Gram matrix updates for efficient time-series estimates
 
 ---
 
@@ -139,6 +140,51 @@ Alex Caruso             +0.96   +6.24   +7.20
 Rudy Gobert             +0.20   +6.28   +6.48
 Damian Lillard          +7.44   -0.52   +6.93
 ```
+
+---
+
+## Rolling RAPM
+
+`fit_rolling_rapm` fits RAPM at a sequence of evaluation dates using **incremental Gram matrix updates** — instead of rebuilding $X^\top W X$ from the full possession history at every date, it maintains the normal equations as running state and advances them forward in time. Each date step costs $O(k \cdot P^2)$ where $k$ is the number of new possessions (≈1,500/day) vs $O(n \cdot P^2)$ for a full recompute — roughly **650× fewer floating-point operations** per step.
+
+Weights combine exponential recency decay with a competition weight that down-weights blowout possessions:
+
+$$w_i = 0.5^{\text{days\_ago}_i / H} \cdot \exp\!\left(-\left(\tfrac{|\text{score\_diff}_i|}{\sigma}\right)^2\right)$$
+
+### CLI
+
+```bash
+python rolling_rapm.py --step-days 7 --half-life 365 --top 20 --ci-window 12 --output rolling_rapm.png --cache rolling_cache.parquet
+```
+
+### Python API
+
+```python
+from pathlib import Path
+from deep_rapm import fit_rolling_rapm
+
+df = fit_rolling_rapm(
+    data_dir=Path("data"),
+    seasons=["2022-23", "2023-24", "2024-25", "2025-26"],
+    player_vocab_path=Path("data/player_vocab.parquet"),
+    player_table_path=Path("data/players.parquet"),
+    step_days=7,
+    half_life_days=365,
+    alpha=2000,
+)
+# df columns: date, player_id, player_name, orapm, drapm, rapm, n_off, n_def
+print(df[df["date"] == df["date"].max()].nlargest(10, "rapm"))
+```
+
+### Rolling RAPM parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `step_days` | 7 | Days between evaluation dates |
+| `half_life_days` | 365 | Recency weighting half-life (days) |
+| `alpha` | 2000 | Ridge penalty |
+| `warmup_days` | 180 | Skip first N days (insufficient data) |
+| `min_poss` | 100 | Min possessions to include a player at a given date |
 
 ---
 
