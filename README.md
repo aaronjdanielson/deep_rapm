@@ -151,9 +151,9 @@ Damian Lillard          +7.44   -0.52   +6.93
 
 Each possession $i$ carries a combined weight:
 
-$$w_i(t) = \underbrace{0.5^{\,\Delta_i / H}}_{\text{recency}} \cdot \underbrace{\exp\!\left(-\tfrac{d_i^2}{\sigma^2}\right)}_{\text{competition}}$$
+$$w_i(t) = 0.5^{\Delta_i / H} \cdot \exp(-d_i^2 / \sigma^2)$$
 
-where $\Delta_i$ is the age of possession $i$ in days at evaluation date $t$, $H$ is the half-life, $d_i$ is the absolute score differential of the game, and $\sigma$ is calibrated to the 95th-percentile score differential.
+where $\Delta_i$ is the age of possession $i$ in days at evaluation date $t$, $H$ is the recency half-life, $d_i$ is the absolute score differential of the game, and $\sigma$ is calibrated to the 95th-percentile score differential (competition weight).
 
 The state maintained by `IncrementalGramState` is:
 
@@ -167,7 +167,7 @@ $$b(t+\Delta) = \gamma \cdot b(t) + X_{\text{new}}^\top W_{\text{new}} y_{\text{
 
 At each evaluation date, RAPM is recovered by solving the ridge system:
 
-$$\hat\beta = \bigl(G(t) + \alpha I\bigr)^{-1}\bigl(b(t) - \hat\mu \cdot b_1(t)\bigr), \quad \hat\mu = \frac{\sum_i w_i y_i}{\sum_i w_i}$$
+$$\hat{\beta} = (G(t) + \alpha I)^{-1}(b(t) - \hat{\mu} \cdot b_1(t)), \quad \hat{\mu} = \frac{\sum_i w_i y_i}{\sum_i w_i}$$
 
 where $b_1(t) = X^\top W(t) \mathbf{1}$ accumulates the weighted column sums for intercept centering.
 
@@ -229,9 +229,7 @@ Each row $X_i$ encodes the 10 players on the court:
 
 Thus, each row of $X$ contains exactly 10 ones.
 
-We partition coefficients as:
-
-$$\beta = \begin{bmatrix} \theta^{\text{off}} \\ \theta^{\text{def}} \end{bmatrix}, \quad \theta^{\text{off}}, \theta^{\text{def}} \in \mathbb{R}^P.$$
+We partition coefficients into offensive and defensive blocks: $\beta = [\theta^{\text{off}}, \theta^{\text{def}}]$ where $\theta^{\text{off}}, \theta^{\text{def}} \in \mathbb{R}^P$.
 
 ---
 
@@ -239,49 +237,41 @@ $$\beta = \begin{bmatrix} \theta^{\text{off}} \\ \theta^{\text{def}} \end{bmatri
 
 We model:
 
-$$y = \mu \mathbf{1} + X \beta + \varepsilon,$$
+$$y = \mu \mathbf{1} + X \beta + \varepsilon$$
 
-where:
-- $\mu \in \mathbb{R}$ is an intercept (not penalized),
-- $\varepsilon \sim (0, \sigma^2 I)$.
+where $\mu \in \mathbb{R}$ is an intercept (not penalized) and $\varepsilon$ is mean-zero noise.
 
 Equivalently, at the possession level:
 
-$$\hat{y}_i = \mu + \sum_{j \in \text{off}(i)} \theta^{\text{off}}_j + \sum_{k \in \text{def}(i)} \theta^{\text{def}}_k.$$
+$$\hat{y}_i = \mu + \sum_{j \in \text{off}(i)} \theta^{\text{off}}_j + \sum_{k \in \text{def}(i)} \theta^{\text{def}}_k$$
 
 ---
 
 ### Weighted Ridge Estimation
 
-To incorporate recency or importance weighting, let:
+Given possession outcomes $y \in \mathbb{R}^n$, design matrix $X \in \mathbb{R}^{n \times 2P}$, and nonnegative observation weights $w_1, \dots, w_n$, the implementation uses **weighted ridge regression with weighted response-centering**.
 
-$$W = \mathrm{diag}(w_1, \dots, w_n), \quad w_i > 0.$$
+First compute the weighted intercept:
 
-We estimate parameters via:
+$$\hat{\mu} = \bar{y}_w = \frac{\sum_i w_i y_i}{\sum_i w_i}$$
 
-$$\min_{\mu, \beta} \; (y - \mu \mathbf{1} - X \beta)^\top W (y - \mu \mathbf{1} - X \beta) + \lambda \|\beta\|_2^2,$$
+Then center the response only:
 
-where:
-- $\lambda > 0$ is the ridge penalty,
-- the intercept $\mu$ is **not penalized**.
+$$y_c = y - \hat{\mu}$$
 
----
+Player coefficients are estimated by solving:
 
-### Closed-Form Solution
+$$\hat{\beta} = (X^\top W X + \lambda I)^{-1} X^\top W y_c$$
 
-Define the weighted mean:
+where $W = \mathrm{diag}(w_1, \dots, w_n)$ and $\lambda > 0$ is the ridge penalty.
 
-$$\bar{y}_w = \frac{\sum_i w_i y_i}{\sum_i w_i}, \quad \bar{X}_w = \frac{\sum_i w_i X_i}{\sum_i w_i}.$$
+Equivalently, in sufficient-statistic form — which is also how the incremental rolling solver maintains state:
 
-Center the data:
+$$G = X^\top W X, \quad b_y = X^\top W y, \quad b_1 = X^\top W \mathbf{1}, \quad \hat{\mu} = \frac{\sum_i w_i y_i}{\sum_i w_i}$$
 
-$$\tilde{y} = y - \bar{y}_w, \quad \tilde{X} = X - \bar{X}_w.$$
+$$\hat{\beta} = (G + \lambda I)^{-1}(b_y - \hat{\mu} \cdot b_1)$$
 
-Then:
-
-$$\hat{\beta} = (\tilde{X}^\top W \tilde{X} + \lambda I)^{-1} \tilde{X}^\top W \tilde{y}$$
-
-$$\hat{\mu} = \bar{y}_w - \bar{X}_w^\top \hat{\beta}$$
+> **Note.** This is a RAPM-style practical approximation: the response is centered using the weighted mean, but the columns of $X$ are not centered and the intercept is not corrected by $-\bar{X}_w^\top \hat{\beta}$. In typical RAPM settings the distinction is small, particularly under strong ridge regularization and with many players.
 
 ---
 
@@ -289,7 +279,7 @@ $$\hat{\mu} = \bar{y}_w - \bar{X}_w^\top \hat{\beta}$$
 
 We report player impacts scaled per 100 possessions:
 
-$$\text{ORAPM}_j = 100 \cdot \theta^{\text{off}}_j, \quad \text{DRAPM}_j = -100 \cdot \theta^{\text{def}}_j.$$
+$$\text{ORAPM}_j = 100 \cdot \theta^{\text{off}}_j, \quad \text{DRAPM}_j = -100 \cdot \theta^{\text{def}}_j$$
 
 The negative sign in DRAPM arises because:
 - $\theta^{\text{def}}_j$ represents contribution to **opponent scoring**,
