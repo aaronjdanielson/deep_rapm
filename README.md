@@ -1,188 +1,116 @@
-# deep-rapm
+<p align="center">
+  <img src="assets/rolling_rapm.png" alt="Rolling RAPM, 2018–19 through opening week 2026–27: the top 20 players by current estimate, with playoff, preseason and off-season windows shaded" width="900">
+</p>
 
-Regularized Adjusted Plus-Minus (RAPM) for NBA possession data — analytical ridge regression with optional recency weighting.
+<h1 align="center">deep-rapm</h1>
+<p align="center"><b>Who is actually helping their team win, right now?</b><br>
+Regularized Adjusted Plus-Minus over 2.2 million NBA possessions,<br>
+refit every week of basketball since 2018 in under a minute.</p>
 
-```bash
-pip install deep-rapm
-```
+<p align="center">
+  <a href="https://pypi.org/project/deep-rapm/"><img src="https://img.shields.io/badge/pypi-deep--rapm-blue" alt="PyPI: deep-rapm"></a>
+  <img src="https://img.shields.io/badge/python-3.10%2B-blue" alt="Python 3.10+">
+  <img src="https://img.shields.io/badge/possessions-2.2M-8A2BE2" alt="2.2M possessions">
+  <img src="https://img.shields.io/badge/seasons-2018--19%20%E2%86%92%202026--27-orange" alt="Seasons 2018-19 to 2026-27">
+</p>
 
----
+<p align="center">
+  <a href="#the-idea-in-thirty-seconds"><b>The idea</b></a> &nbsp;·&nbsp;
+  <a href="#the-trick-incremental-gram-updates"><b>The trick</b></a> &nbsp;·&nbsp;
+  <a href="#quickstart"><b>Quickstart</b></a> &nbsp;·&nbsp;
+  <a href="#the-data-pipeline"><b>The data</b></a> &nbsp;·&nbsp;
+  <a href="#the-model"><b>The model</b></a>
+</p>
 
-## Overview
-
-RAPM estimates each player's contribution per 100 possessions, controlling for the other nine players on the court. This package provides:
-
-- **Possession collection** — pull and cache play-by-play data from the NBA Stats API
-- **Player metadata** — build a player vocabulary with position information
-- **Analytical RAPM** — exact ridge regression via the weighted normal equations
-- **Rolling RAPM** — incremental Gram matrix updates for efficient time-series estimates
-
----
-
-## Data pipeline
-
-**Step 1 — collect possessions** (~10 min per season):
-
-```bash
-collect-possessions --season 2022-23 --output-dir data/2022-23
-collect-possessions --season 2023-24 --output-dir data/2023-24
-```
-
-**Step 2 — build player vocab and position table**:
-
-```bash
-collect-players --seasons 2021-22 2022-23 2023-24
-```
-
-Produces `data/player_vocab.parquet` and `data/players.parquet`.
+*The chart above: nine seasons of rolling RAPM for the current top 20, one ridge fit per week. Gold bands are playoffs, blue bands are preseason (weighted at 0.20), grey bands are the off-season — including the thin blue sliver in July 2020, which is the COVID bubble scrimmages.*
 
 ---
 
-## Fitting RAPM
+## The idea in thirty seconds
 
-### CLI
+Plus-minus tells you what happened while a player was on the floor — and credits him for everything his four teammates did. RAPM fixes that with a regression: every possession is a row, the ten players on the court are the columns, and ridge regression untangles who was responsible for the points. The result is each player's offensive and defensive impact **per 100 possessions, controlling for the other nine players**.
 
-**Season mode** (uses pre-collected parquets):
+`deep-rapm` does this at three speeds:
+
+- **One season, one number** — `solve-rapm`, an exact weighted ridge solve.
+- **A date range** — fetch, cache, and fit any window of games.
+- **Every week since 2018** — `rolling-rapm`, which refits the entire league at 396 evaluation dates in under a minute, using the incremental update below.
+
+Possessions are weighted by three things at once: **recency** (exponential decay, one-year half-life), **competitiveness** (garbage time at a 24-point lead counts ~5%), and **context** (preseason possessions enter at 0.20 weight — enough to steady October estimates, too little to let camp scrimmages move a star's rank).
+
+```
+pip install "deep-rapm[viz]"
+```
+
+## Current top 10
+
+One fit per week; this is the most recent, with all regular-season, playoff and preseason data through October 20, 2026. Values are points per 100 possessions; positive DRAPM is good defense.
+
+| Player | RAPM | ORAPM | DRAPM |
+|---|---|---|---|
+| Shai Gilgeous-Alexander | **+6.6** | +2.6 | +4.0 |
+| Victor Wembanyama | **+5.0** | +0.9 | +4.1 |
+| Giannis Antetokounmpo | **+5.0** | +5.0 | −0.0 |
+| Nikola Jokić | **+4.6** | +5.0 | −0.3 |
+| Alex Caruso | **+4.0** | +0.9 | +3.1 |
+| Joel Embiid | **+3.7** | +2.1 | +1.6 |
+| Jalen Suggs | **+3.7** | +0.1 | +3.6 |
+| Chet Holmgren | **+3.6** | +0.2 | +3.3 |
+| Julian Champagnie | **+3.3** | +1.6 | +1.7 |
+| Payton Pritchard | **+3.3** | +2.4 | +0.9 |
+
+## The trick: incremental Gram updates
+
+Refitting ridge regression from scratch at every evaluation date means rebuilding $X^\top W X$ from the full possession history — $O(n \cdot P^2)$ per date, with $n$ in the millions. The weights make that unnecessary.
+
+Each possession $i$ carries weight
+
+$$w_i(t) = 0.5^{\Delta_i / H} \cdot \exp\!\left(-d_i^2 / \sigma^2\right) \cdot c_i$$
+
+where $\Delta_i$ is the possession's age in days at evaluation date $t$, $H$ the recency half-life, $d_i$ the score differential when the possession started ($\sigma$ calibrated so a 95th-percentile blowout gets weight 0.05), and $c_i$ a context weight (1.0 for regular season and playoffs, 0.20 for preseason).
+
+Only the recency factor depends on $t$ — and it depends on it the **same way for every possession**. Advance the evaluation date by $\Delta$ days and every existing weight decays by the same scalar $\gamma = 0.5^{\Delta/H}$. So the sufficient statistics decay by $\gamma$ too, and new game-dates just add on:
+
+$$G(t+\Delta) = \gamma \, G(t) + X_{\text{new}}^\top W_{\text{new}} X_{\text{new}}, \qquad b(t+\Delta) = \gamma \, b(t) + X_{\text{new}}^\top W_{\text{new}}\, y_{\text{new}}$$
+
+`IncrementalGramState` holds $G$, $b$, and the intercept accumulators as running state; each weekly step costs $O(k \cdot P^2)$ for the $k$ possessions of the newly ingested dates — roughly **650× fewer floating-point operations** than a rebuild, with numerically identical results (validated against the full recompute via `--no-incremental`).
+
+<details>
+<summary><b>The full solve at each date</b></summary>
+
+With state $G = X^\top W X$, $\;b_y = X^\top W y$, $\;b_1 = X^\top W \mathbf{1}$:
+
+$$\hat{\mu} = \frac{\sum_i w_i y_i}{\sum_i w_i}, \qquad \hat{\beta} = (G + \alpha I)^{-1}\left(b_y - \hat{\mu}\, b_1\right)$$
+
+The intercept is the weighted mean of the response and is not penalized; the response is centered, the columns of $X$ are not — the standard RAPM approximation, negligible under strong ridge regularization. Coefficients split into offense and defense blocks, $\beta = [\theta^{\text{off}}, \theta^{\text{def}}]$, and are reported per 100 possessions:
+
+$$\text{ORAPM}_j = 100\,\theta^{\text{off}}_j, \qquad \text{DRAPM}_j = -100\,\theta^{\text{def}}_j$$
+
+(the sign flip makes "higher = better defense"). Players need 100 possessions in a role to appear in the output at a given date.
+
+</details>
+
+## Quickstart
 
 ```bash
-solve-rapm                                    # 5 training seasons, alpha=2000
-solve-rapm --seasons 2021-22 2022-23 2023-24  # specific seasons
-solve-rapm --alpha 1000                       # tune regularisation
-solve-rapm --half-life 365                    # recency weighting (1-year half-life)
-solve-rapm --output-dir runs/rapm             # custom output directory
+pip install "deep-rapm[viz]"
+
+# Rolling RAPM: fit every week since 2018, cache the results, draw the chart
+rolling-rapm --include-playoffs --include-preseason \
+  --cache rolling_cache.parquet --output rolling_rapm.png \
+  --step-days 7 --half-life 365 --top 20
+
+# One-shot RAPM over chosen seasons
+solve-rapm --seasons 2024-25 2025-26 --alpha 2000
+
+# Or any date window, fetched and cached on demand
+solve-rapm --from-date 2026-10-01 --to-date 2026-11-15 --half-life 180
 ```
 
-**Date-range mode** (auto-fetches and caches games from the NBA API):
+> [!TIP]
+> `--cache` **loads** the cache if the file exists — it does not extend it. To pick up new games, move the cache file aside and rerun.
 
-```bash
-solve-rapm --from-date 2024-10-01 --to-date 2025-04-15
-solve-rapm --from-date 2023-10-01 --to-date 2025-04-15 --half-life 180
-```
-
-Output is saved to `checkpoints/rapm/rapm.parquet` and `rapm_summary.json`.
-
-### Python API
-
-```python
-from pathlib import Path
-from deep_rapm import fit_rapm, load_rapm
-
-# Season mode
-results = fit_rapm(
-    data_dir=Path("data"),
-    seasons=["2021-22", "2022-23", "2023-24"],
-    player_vocab_path=Path("data/player_vocab.parquet"),
-    player_table_path=Path("data/players.parquet"),
-    alpha=2000,
-    output_dir=Path("checkpoints/rapm"),
-)
-
-# Season mode with recency weighting (1-year half-life)
-results = fit_rapm(
-    data_dir=Path("data"),
-    seasons=["2021-22", "2022-23", "2023-24"],
-    player_vocab_path=Path("data/player_vocab.parquet"),
-    player_table_path=Path("data/players.parquet"),
-    alpha=2000,
-    half_life_days=365,
-    output_dir=Path("checkpoints/rapm"),
-)
-
-# Date-range mode
-results = fit_rapm(
-    data_dir=Path("data"),
-    from_date="2024-10-01",
-    to_date="2025-04-15",
-    player_vocab_path=Path("data/player_vocab.parquet"),
-    player_table_path=Path("data/players.parquet"),
-    alpha=2000,
-    half_life_days=180,
-    output_dir=Path("checkpoints/rapm"),
-)
-
-# Load previously saved results
-results = load_rapm(Path("checkpoints/rapm"))
-
-qualified = results[results["qualified"]]
-print(qualified.nlargest(10, "rapm")[["player_name", "orapm", "drapm", "rapm"]])
-```
-
-### Output columns
-
-All values are per 100 possessions.
-
-| Column | Description |
-|--------|-------------|
-| `orapm` | Offensive RAPM — points added per 100 offensive possessions |
-| `drapm` | Defensive RAPM — points prevented per 100 defensive possessions (positive = good defender) |
-| `rapm`  | Total RAPM = `orapm + drapm` |
-| `n_off` / `n_def` | Offensive / defensive possession counts |
-| `qualified` | `True` if ≥ 100 possessions in each role |
-
-### Key parameters
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `alpha` | 2000 | Ridge penalty — higher shrinks estimates toward zero |
-| `half_life_days` | None | Half-life for recency weighting (days). None = equal weights |
-| `min_poss` | 100 | Minimum possessions each role to be flagged as qualified |
-
-### Sample output (2018-19 through 2022-23, alpha=2000)
-
-```
-Player                  ORAPM   DRAPM    RAPM
-Nikola Jokić            +7.74   +1.94   +9.68
-Joel Embiid             +4.44   +4.56   +9.00
-Stephen Curry           +6.09   +2.29   +8.38
-Giannis Antetokounmpo   +4.33   +4.03   +8.35
-LeBron James            +6.01   +2.03   +8.04
-Alex Caruso             +0.96   +6.24   +7.20
-Rudy Gobert             +0.20   +6.28   +6.48
-Damian Lillard          +7.44   -0.52   +6.93
-```
-
----
-
-## Rolling RAPM
-
-`fit_rolling_rapm` fits RAPM at a sequence of evaluation dates using **incremental Gram matrix updates** — instead of rebuilding $X^\top W X$ from the full possession history at every date, it maintains the weighted normal equations as running state and advances them forward in time.
-
-### Incremental algorithm
-
-Each possession $i$ carries a combined weight:
-
-$$w_i(t) = 0.5^{\Delta_i / H} \cdot \exp(-d_i^2 / \sigma^2)$$
-
-where $\Delta_i$ is the age of possession $i$ in days at evaluation date $t$, $H$ is the recency half-life, $d_i$ is the absolute score differential of the game, and $\sigma$ is calibrated to the 95th-percentile score differential (competition weight).
-
-The state maintained by `IncrementalGramState` is:
-
-$$G(t) = X^\top W(t) X, \quad b(t) = X^\top W(t) y$$
-
-When the evaluation date advances by $\Delta$ days, all existing weights decay by $\gamma = 0.5^{\Delta/H}$, giving a closed-form update:
-
-$$G(t+\Delta) = \gamma \cdot G(t) + X_{\text{new}}^\top W_{\text{new}} X_{\text{new}}$$
-
-$$b(t+\Delta) = \gamma \cdot b(t) + X_{\text{new}}^\top W_{\text{new}} y_{\text{new}}$$
-
-At each evaluation date, RAPM is recovered by solving the ridge system:
-
-$$\hat{\beta} = (G(t) + \alpha I)^{-1}(b(t) - \hat{\mu} \cdot b_1(t)), \quad \hat{\mu} = \frac{\sum_i w_i y_i}{\sum_i w_i}$$
-
-where $b_1(t) = X^\top W(t) \mathbf{1}$ accumulates the weighted column sums for intercept centering.
-
-Each date step costs $O(k \cdot P^2)$ where $k$ is new possessions since the last step (≈1,500/day) vs $O(n \cdot P^2)$ for a full recompute over all $n$ historical possessions — roughly **650× fewer floating-point operations** per step.
-
-### CLI
-
-```bash
-# requires: pip install "deep-rapm[viz]"
-rolling-rapm --step-days 7 --half-life 365 --top 20 --output rolling_rapm.png
-rolling-rapm --step-days 7 --half-life 360 --top 12 --alpha 5000 --output rolling_rapm.png
-rolling-rapm --cache rolling_cache.parquet --metric orapm  # cache results and plot orapm
-```
-
-### Python API
+The same things from Python:
 
 ```python
 from pathlib import Path
@@ -190,116 +118,77 @@ from deep_rapm import fit_rolling_rapm
 
 df = fit_rolling_rapm(
     data_dir=Path("data"),
-    seasons=["2022-23", "2023-24", "2024-25", "2025-26"],
-    player_vocab_path=Path("data/player_vocab.parquet"),
-    player_table_path=Path("data/players.parquet"),
-    step_days=7,
-    half_life_days=365,
-    alpha=2000,
+    seasons=["2024-25", "2025-26", "2026-27"],
+    step_days=7, half_life_days=365, alpha=2000,
+    include_playoffs=True, include_preseason=True,
 )
-# df columns: date, player_id, player_name, orapm, drapm, rapm, n_off, n_def
-print(df[df["date"] == df["date"].max()].nlargest(10, "rapm"))
+# columns: date, player_id, player_name, orapm, drapm, rapm, n_off, n_def
+latest = df[df["date"] == df["date"].max()]
+print(latest.nlargest(10, "rapm")[["player_name", "orapm", "drapm", "rapm"]])
 ```
 
-### Rolling RAPM parameters
+<details>
+<summary><b>Key parameters</b></summary>
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `step_days` | 7 | Days between evaluation dates |
-| `half_life_days` | 365 | Recency weighting half-life (days) |
-| `alpha` | 2000 | Ridge penalty |
-| `warmup_days` | 180 | Skip first N days (insufficient data) |
-| `min_poss` | 100 | Min possessions to include a player at a given date |
-| `include_playoffs` | False | Include playoff possessions |
+| `alpha` | 2000 | Ridge penalty — higher shrinks estimates toward zero |
+| `half_life_days` | 365 | Recency-weighting half-life in days (`None` = equal weights in one-shot mode) |
+| `step_days` | 7 | Days between rolling evaluation dates |
+| `warmup_days` | 180 | Skip the first N days (too little data for stable estimates) |
+| `min_poss` | 100 | Minimum possessions per role to be reported |
+| `include_playoffs` | False | Include playoff possessions at full weight |
+| `include_preseason` | False | Include preseason possessions at `preseason_weight` |
+| `preseason_weight` | 0.20 | Context weight multiplier for preseason possessions |
 
----
+</details>
 
-## Model
+## The data pipeline
 
-We model possession-level outcomes using a ridge-regularized linear model over player participation.
+Everything comes from public NBA sources and lands in per-season parquet files — one row per possession, with the ten players on court, the points scored, and the score differential when the possession began.
 
-Let:
-- $y_i \in \mathbb{R}$ denote the outcome for possession $i$ (e.g., points scored),
-- $X \in \mathbb{R}^{n \times 2P}$ be the design matrix,
-- $\beta \in \mathbb{R}^{2P}$ be player coefficients.
+| Source | Role |
+|---|---|
+| `pbpstats` (enhanced play-by-play via `data.nba.com`) | Primary per-game possession extraction |
+| `nba_api` `PlayByPlayV3` + `BoxScoreTraditionalV3` | Automatic fallback when pbpstats returns nothing (recent seasons, Akamai blocks); score-delta point counting, ~97% accuracy vs. final box scores |
+| `nba_api` `LeagueGameLog` / `LeagueGameFinder` | Season schedules and nightly game discovery |
+| `nba_api` `CommonTeamRoster` / `CommonPlayerInfo` | Player names, positions, and the 1,457-player vocabulary |
 
-Each row $X_i$ encodes the 10 players on the court:
-- 5 offensive players (indicator = 1 in offense block),
-- 5 defensive players (indicator = 1 in defense block).
+```bash
+collect-possessions --season 2024-25        # one season, cached per game
+collect-players --seasons 2024-25 2025-26   # player vocab + position table
+python scripts/collect_nightly.py           # cron target: yesterday's games → season parquets
+```
 
-Thus, each row of $X$ contains exactly 10 ones.
+Collection is **idempotent**: each game is written once to `data/games/`, and the nightly merge appends only game IDs the season parquets don't already have. Current coverage: nine seasons, 2018-19 through 2026-27 — regular season, playoffs (play-in included), and 658 preseason games back to 2018.
 
-We partition coefficients into offensive and defensive blocks: $\beta = [\theta^{\text{off}}, \theta^{\text{def}}]$ where $\theta^{\text{off}}, \theta^{\text{def}} \in \mathbb{R}^P$.
+## The model
 
----
+A possession is a row of $X \in \mathbb{R}^{n \times 2P}$ with exactly ten ones: five in the offense block, five in the defense block. The outcome is the points scored on the possession,
 
-### Linear Model
+$$y = \mu \mathbf{1} + X\beta + \varepsilon,$$
 
-We model:
-
-$$y = \mu \mathbf{1} + X \beta + \varepsilon$$
-
-where $\mu \in \mathbb{R}$ is an intercept (not penalized) and $\varepsilon$ is mean-zero noise.
-
-Equivalently, at the possession level:
-
-$$\hat{y}_i = \mu + \sum_{j \in \text{off}(i)} \theta^{\text{off}}_j + \sum_{k \in \text{def}(i)} \theta^{\text{def}}_k$$
-
----
-
-### Weighted Ridge Estimation
-
-Given possession outcomes $y \in \mathbb{R}^n$, design matrix $X \in \mathbb{R}^{n \times 2P}$, and nonnegative observation weights $w_1, \dots, w_n$, the implementation uses **weighted ridge regression with weighted response-centering**.
-
-First compute the weighted intercept:
-
-$$\hat{\mu} = \bar{y}_w = \frac{\sum_i w_i y_i}{\sum_i w_i}$$
-
-Then center the response only:
-
-$$y_c = y - \hat{\mu}$$
-
-Player coefficients are estimated by solving:
-
-$$\hat{\beta} = (X^\top W X + \lambda I)^{-1} X^\top W y_c$$
-
-where $W = \mathrm{diag}(w_1, \dots, w_n)$ and $\lambda > 0$ is the ridge penalty.
-
-Equivalently, in sufficient-statistic form — which is also how the incremental rolling solver maintains state:
-
-$$G = X^\top W X, \quad b_y = X^\top W y, \quad b_1 = X^\top W \mathbf{1}, \quad \hat{\mu} = \frac{\sum_i w_i y_i}{\sum_i w_i}$$
-
-$$\hat{\beta} = (G + \lambda I)^{-1}(b_y - \hat{\mu} \cdot b_1)$$
-
-> **Note.** This is a RAPM-style practical approximation: the response is centered using the weighted mean, but the columns of $X$ are not centered and the intercept is not corrected by $-\bar{X}_w^\top \hat{\beta}$. In typical RAPM settings the distinction is small, particularly under strong ridge regularization and with many players.
-
----
-
-### Interpretation (RAPM)
-
-We report player impacts scaled per 100 possessions:
-
-$$\text{ORAPM}_j = 100 \cdot \theta^{\text{off}}_j, \quad \text{DRAPM}_j = -100 \cdot \theta^{\text{def}}_j$$
-
-The negative sign in DRAPM arises because:
-- $\theta^{\text{def}}_j$ represents contribution to **opponent scoring**,
-- strong defenders have $\theta^{\text{def}}_j < 0$.
-
-Thus, higher DRAPM corresponds to better defense.
-
----
-
-### Summary
+fit by weighted ridge regression as described above. The ridge penalty is what makes this *adjusted*: teammates who always play together are statistically inseparable, and $\alpha$ resolves that collinearity by shrinking toward zero rather than exploding in opposite directions.
 
 | Component | Role |
 |-----------|------|
-| Offense coefficients $\theta^{\text{off}}$ | Increase scoring |
-| Defense coefficients $\theta^{\text{def}}$ | Decrease opponent scoring |
-| Ridge penalty $\lambda$ | Stabilizes estimates under collinearity |
-| Weights $w_i$ | Time-decay or importance weighting |
+| Offense coefficients $\theta^{\text{off}}$ | Points a player adds per offensive possession |
+| Defense coefficients $\theta^{\text{def}}$ | Points a player allows per defensive possession (reported negated) |
+| Ridge penalty $\alpha$ | Stabilizes estimates under lineup collinearity |
+| Weights $w_i$ | Recency × competitiveness × context |
 
----
+## What is in this repository
+
+| Path | What |
+|---|---|
+| `deep_rapm/rolling.py` | `IncrementalGramState` and `fit_rolling_rapm` — the incremental solver |
+| `deep_rapm/rapm.py` | Design-matrix construction, recency/competition weights, the exact ridge solve |
+| `deep_rapm/data/` | Possession extraction (pbpstats + nba_api fallback), season collection, player metadata |
+| `rolling_rapm.py` | CLI driver and the chart at the top of this page (`rolling-rapm` is the packaged equivalent) |
+| `scripts/collect_nightly.py` | Nightly cron entry: new games → per-game cache → season parquets |
+| `docs/incremental_rapm.md` | Derivation notes for the incremental update |
+| `tests/` | Possession-extraction, solver, and incremental-vs-full equivalence tests |
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE).

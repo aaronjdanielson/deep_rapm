@@ -123,6 +123,7 @@ class IncrementalGramState:
         n_def_counts: np.ndarray,
         comp_sigma: Optional[float] = None,
         score_diff: Optional[np.ndarray] = None,
+        context_weight: Optional[np.ndarray] = None,
     ) -> None:
         """
         Add one batch of possessions at the current date.
@@ -133,17 +134,25 @@ class IncrementalGramState:
 
         Parameters
         ----------
-        X            : (n_poss, 2·P) sparse indicator matrix.
-        y            : (n_poss,) points scored.
-        n_off_counts : (P,) raw offensive possession counts for this batch.
-        n_def_counts : (P,) raw defensive possession counts for this batch.
-        comp_sigma   : Competition-weight scale (pts).  If None, all weights = 1.
-        score_diff   : (n_poss,) signed score differential for competition weights.
+        X              : (n_poss, 2·P) sparse indicator matrix.
+        y              : (n_poss,) points scored.
+        n_off_counts   : (P,) raw offensive possession counts for this batch.
+        n_def_counts   : (P,) raw defensive possession counts for this batch.
+        comp_sigma     : Competition-weight scale (pts).  If None, w = 1.
+        score_diff     : (n_poss,) signed score differential for competition weights.
+        context_weight : (n_poss,) per-possession context multiplier (e.g. 0.20
+                         for preseason, 1.0 for regular season).  Multiplies into
+                         the competition weight before the ridge accumulation.
+                         n_off/n_def counts are NOT scaled — the min-poss filter
+                         remains a raw count.
         """
         if comp_sigma is not None and score_diff is not None:
             w = np.exp(-(np.abs(score_diff) / comp_sigma) ** 2).astype(np.float64)
         else:
             w = np.ones(len(y), dtype=np.float64)
+
+        if context_weight is not None:
+            w = w * context_weight.astype(np.float64)
 
         w_sqrt   = np.sqrt(w)
         Xw       = X.multiply(w_sqrt[:, None])
@@ -188,6 +197,8 @@ def fit_rolling_rapm(
     min_poss: int = 100,
     warmup_days: int = 180,
     include_playoffs: bool = False,
+    include_preseason: bool = False,
+    preseason_weight: float = 0.20,
     verbose: bool = True,
 ) -> pd.DataFrame:
     """
@@ -207,6 +218,10 @@ def fit_rolling_rapm(
     warmup_days       : Skip the first N days (too few possessions for stable
                         estimates).
     include_playoffs  : If True, include playoff possessions.
+    include_preseason : If True, include preseason possessions (weighted by
+                        ``preseason_weight``).
+    preseason_weight  : Multiplicative down-weight applied to every preseason
+                        possession (default 0.20).
     verbose           : Print progress.
 
     Returns
@@ -236,9 +251,15 @@ def fit_rolling_rapm(
     for season in seasons:
         season_dir   = data_dir / season
         all_parquets = sorted(season_dir.glob("possessions_*.parquet"))
-        parquets     = all_parquets if include_playoffs else [
-            p for p in all_parquets if "playoffs" not in p.name
-        ]
+        parquets = []
+        for p in all_parquets:
+            is_playoff  = "playoffs"  in p.name
+            is_preseason = "preseason" in p.name
+            if is_playoff and not include_playoffs:
+                continue
+            if is_preseason and not include_preseason:
+                continue
+            parquets.append(p)
         if not parquets:
             ckpt = season_dir / "checkpoints" / "checkpoint.parquet"
             if ckpt.exists():
@@ -250,7 +271,9 @@ def fit_rolling_rapm(
                     print(f"  Warning: no possessions found for {season} — skipping")
                 continue
         for pq in parquets:
-            frames.append(pd.read_parquet(pq))
+            df_pq = pd.read_parquet(pq)
+            df_pq["context_weight"] = preseason_weight if "preseason" in pq.name else 1.0
+            frames.append(df_pq)
 
     all_poss = pd.concat(frames, ignore_index=True)
     all_poss["game_date"] = pd.to_datetime(all_poss["game_date"])
@@ -274,10 +297,12 @@ def fit_rolling_rapm(
     if verbose:
         print("Building per-game-date matrices…")
     game_date_data: list[tuple] = []
+    has_context = "context_weight" in all_poss.columns
     for gd, grp in all_poss.groupby("game_date"):
         X_g, y_g, n_off_g, n_def_g = _build_matrix_from_df(grp, player_vocab)
         sd_g = grp["score_diff"].values.astype(np.float64) if has_score_diff else None
-        game_date_data.append((pd.Timestamp(gd), X_g, y_g, n_off_g, n_def_g, sd_g))
+        cw_g = grp["context_weight"].values.astype(np.float64) if has_context else None
+        game_date_data.append((pd.Timestamp(gd), X_g, y_g, n_off_g, n_def_g, sd_g, cw_g))
     game_date_data.sort(key=lambda t: t[0])
     if verbose:
         print(f"  {len(game_date_data)} unique game dates")
@@ -288,6 +313,10 @@ def fit_rolling_rapm(
         end=last_date,
         freq=f"{step_days}D",
     )
+    # Always include last_date so the most recent games are reflected even when
+    # they fall after the final step on the regular grid.
+    if len(eval_dates) and eval_dates[-1] < last_date:
+        eval_dates = eval_dates.append(pd.DatetimeIndex([last_date]))
     if verbose:
         print(f"\nFitting RAPM at {len(eval_dates)} dates "
               f"(step={step_days}d, half-life={half_life_days:.0f}d, incremental)…")
@@ -300,10 +329,11 @@ def fit_rolling_rapm(
     for i, eval_date in enumerate(eval_dates):
         while (next_gd_idx < len(game_date_data)
                and game_date_data[next_gd_idx][0] <= eval_date):
-            gd, X_g, y_g, n_off_g, n_def_g, sd_g = game_date_data[next_gd_idx]
+            gd, X_g, y_g, n_off_g, n_def_g, sd_g, cw_g = game_date_data[next_gd_idx]
             state.advance_to(gd)
             state.ingest(X_g, y_g, n_off_g, n_def_g,
-                         comp_sigma=comp_sigma, score_diff=sd_g)
+                         comp_sigma=comp_sigma, score_diff=sd_g,
+                         context_weight=cw_g)
             next_gd_idx += 1
 
         if state.total_w == 0:

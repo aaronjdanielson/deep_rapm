@@ -39,7 +39,7 @@ from deep_rapm.rapm import _build_matrix_from_df, _recency_weights, _competition
 DATA_DIR     = Path("data")
 PLAYER_VOCAB = Path("data/player_vocab.parquet")
 PLAYER_TABLE = Path("data/players.parquet")
-SEASONS      = ["2018-19", "2019-20", "2020-21", "2021-22", "2022-23", "2023-24", "2024-25", "2025-26"]
+SEASONS      = ["2018-19", "2019-20", "2020-21", "2021-22", "2022-23", "2023-24", "2024-25", "2025-26", "2026-27"]
 WARMUP_DAYS  = 180
 
 
@@ -152,12 +152,73 @@ def _compute_rolling_rapm_full(
 # Plot
 # ---------------------------------------------------------------------------
 
+#: Background shading per season phase: (color, band alpha, label).
+#: Hues are CVD-distinguishable (gold / blue / grey); bands stay recessive.
+PHASE_STYLE = {
+    "playoffs":  ("#c9a227", 0.15, "Playoffs"),
+    "preseason": ("#4878a8", 0.15, "Preseason"),
+    "offseason": ("grey",    0.06, "Off-season"),
+}
+
+
+def _phase_windows(
+    data_dir: Path,
+    seasons: list[str],
+) -> dict[str, list[tuple[pd.Timestamp, pd.Timestamp]]]:
+    """Date windows per season phase, read from the possession parquets.
+
+    Returns {"preseason": [(start, end), …], "playoffs": […], "offseason": […]}.
+    A phase with disjoint clusters of game dates (e.g. the 2019-20 preseason
+    parquet also holds the July 2020 bubble scrimmages) yields one window per
+    contiguous run, split wherever consecutive game dates sit > 21 days apart.
+    Off-season windows are the gaps between one season's last game (any phase)
+    and the next season's first. Seasons without a phase parquet are skipped.
+    """
+    def _runs(dates: pd.Series) -> list[tuple[pd.Timestamp, pd.Timestamp]]:
+        days = pd.to_datetime(dates.unique()).sort_values()
+        out, start = [], days[0]
+        for prev, cur in zip(days, days[1:]):
+            if (cur - prev).days > 21:
+                out.append((start, prev))
+                start = cur
+        out.append((start, days[-1]))
+        return out
+
+    windows: dict[str, list[tuple[pd.Timestamp, pd.Timestamp]]] = {
+        "preseason": [], "playoffs": [],
+    }
+    season_bounds: list[tuple[pd.Timestamp, pd.Timestamp]] = []
+    for season in seasons:
+        slug = season.replace("-", "_")
+        lo = hi = None
+        for phase, suffix in (("preseason", "preseason"),
+                              ("regular",   "regular_season"),
+                              ("playoffs",  "playoffs")):
+            p = Path(data_dir) / season / f"possessions_{slug}_{suffix}.parquet"
+            if not p.exists():
+                continue
+            runs = _runs(pd.read_parquet(p, columns=["game_date"])["game_date"])
+            if phase in windows:
+                windows[phase].extend(runs)
+            lo = runs[0][0]  if lo is None else min(lo, runs[0][0])
+            hi = runs[-1][1] if hi is None else max(hi, runs[-1][1])
+        if lo is not None:
+            season_bounds.append((lo, hi))
+    season_bounds.sort()
+    windows["offseason"] = [
+        (end, nxt_start)
+        for (_, end), (nxt_start, _) in zip(season_bounds, season_bounds[1:])
+    ]
+    return windows
+
+
 def plot_rolling(
     df: pd.DataFrame,
     metric: str = "rapm",
     top_n: int = 10,
     ci_window: int = 12,
     output: Path | None = None,
+    phase_windows: dict[str, list[tuple[pd.Timestamp, pd.Timestamp]]] | None = None,
 ) -> None:
     """
     ci_window : number of evaluation dates used to compute the local ±1σ band.
@@ -194,10 +255,28 @@ def plot_rolling(
 
     ax.axhline(0, color="#555555", linewidth=0.9, linestyle="--", alpha=0.45)
 
-    years = range(df["date"].dt.year.min(), df["date"].dt.year.max() + 1)
-    for yr in years:
-        ax.axvspan(pd.Timestamp(f"{yr}-04-20"), pd.Timestamp(f"{yr}-10-15"),
-                   color="grey", alpha=0.06, linewidth=0)
+    # Season-phase shading: playoffs (gold), preseason (blue), off-season (grey).
+    xlo, xhi = df["date"].min(), df["date"].max()
+    band_handles = []
+    if phase_windows:
+        from matplotlib.patches import Patch
+        for phase, (color, alpha, label) in PHASE_STYLE.items():
+            spans = [(max(s, xlo), min(e, xhi))
+                     for s, e in phase_windows.get(phase, [])]
+            spans = [(s, e) for s, e in spans if s < e]
+            for s, e in spans:
+                ax.axvspan(s, e, color=color, alpha=alpha, linewidth=0)
+            if spans:
+                # Legend chips use a stronger alpha so the hue stays readable.
+                band_handles.append(
+                    Patch(facecolor=color, alpha=min(3 * alpha, 1.0), label=label)
+                )
+    else:
+        # Fallback without data access: fixed approximate off-season spans.
+        years = range(df["date"].dt.year.min(), df["date"].dt.year.max() + 1)
+        for yr in years:
+            ax.axvspan(pd.Timestamp(f"{yr}-04-20"), pd.Timestamp(f"{yr}-10-15"),
+                       color="grey", alpha=0.06, linewidth=0)
 
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%b '%y"))
     ax.xaxis.set_major_locator(mdates.MonthLocator(bymonth=[1, 4, 7, 10]))
@@ -207,6 +286,10 @@ def plot_rolling(
     ax.set_ylabel(f"{metric_label}  (pts / 100 possessions)", fontsize=12)
     ax.set_title(f"Rolling {metric_label} — top {top_n} by current estimate  "
                  f"(ribbon = ±1σ local variability)", fontsize=13, pad=14)
+    if band_handles:
+        band_legend = ax.legend(handles=band_handles, loc="lower right",
+                                fontsize=8, framealpha=0.9, edgecolor="#cccccc")
+        ax.add_artist(band_legend)
     ax.legend(loc="upper left", fontsize=9, framealpha=0.9, edgecolor="#cccccc", ncol=2)
     ax.grid(True, alpha=0.2, color="#aaaaaa")
     ax.spines[["top", "right"]].set_visible(False)
@@ -242,6 +325,10 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--cache",        type=Path,  default=None,
                    help="Parquet file to cache/load rolling results.")
     p.add_argument("--include-playoffs", action="store_true", default=False)
+    p.add_argument("--include-preseason", action="store_true", default=False,
+                   help="Include preseason possessions, weighted by --preseason-weight.")
+    p.add_argument("--preseason-weight", type=float, default=0.20,
+                   help="Per-possession weight for preseason (default 0.20).")
     p.add_argument("--no-incremental",   action="store_true", default=False,
                    help="Full recompute at each date (slow — for validation only).")
     return p
@@ -274,6 +361,8 @@ def main() -> None:
             half_life_days=args.half_life,
             alpha=args.alpha,
             include_playoffs=args.include_playoffs,
+            include_preseason=args.include_preseason,
+            preseason_weight=args.preseason_weight,
         )
 
     if args.cache and not args.cache.exists():
@@ -281,7 +370,8 @@ def main() -> None:
         print(f"Cached → {args.cache}")
 
     plot_rolling(df, metric=args.metric, top_n=args.top,
-                 ci_window=args.ci_window, output=args.output)
+                 ci_window=args.ci_window, output=args.output,
+                 phase_windows=_phase_windows(args.data_dir, args.seasons))
 
 
 if __name__ == "__main__":
