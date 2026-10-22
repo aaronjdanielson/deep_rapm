@@ -4,13 +4,13 @@ rolling_rapm.py — Rolling RAPM time series plot (CLI entry point).
 Delegates computation to deep_rapm.rolling.fit_rolling_rapm (incremental)
 or the legacy full-recompute path via deep_rapm.rapm.solve_ridge.
 
-Usage
+Usage (from the repo root; `rolling-rapm` is the installed equivalent)
 -----
-    python rolling_rapm.py
-    python rolling_rapm.py --step-days 7 --half-life 365 --top 20
-    python rolling_rapm.py --step-days 7 --half-life 365 --top 20 --ci-window 12 --output rolling_rapm.png --cache rolling_cache.parquet
-    python rolling_rapm.py --metric orapm --output orapm_rolling.png
-    python rolling_rapm.py --no-incremental   # slow full recompute (for validation)
+    python -m deep_rapm.scripts.rolling_rapm
+    python -m deep_rapm.scripts.rolling_rapm --step-days 7 --half-life 365 --top 20
+    python -m deep_rapm.scripts.rolling_rapm --top 20 --cache outputs/rolling_cache.parquet --output outputs/rolling_rapm.png
+    python -m deep_rapm.scripts.rolling_rapm --metric orapm --output outputs/orapm_rolling.png
+    python -m deep_rapm.scripts.rolling_rapm --no-incremental   # slow full recompute (for validation)
 
 Requirements (beyond deep-rapm)
 ---------------------------------
