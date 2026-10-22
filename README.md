@@ -42,22 +42,10 @@ Possessions are weighted by three things at once: **recency** (exponential decay
 pip install "deep-rapm[viz]"
 ```
 
-## Current top 10
+## Current leaderboard
 
-One fit per week; this is the most recent, with all regular-season, playoff and preseason data through October 20, 2026. Values are points per 100 possessions; positive DRAPM is good defense.
-
-| Player | RAPM | ORAPM | DRAPM |
-|---|---|---|---|
-| Shai Gilgeous-Alexander | **+6.6** | +2.6 | +4.0 |
-| Victor Wembanyama | **+5.0** | +0.9 | +4.1 |
-| Giannis Antetokounmpo | **+5.0** | +5.0 | −0.0 |
-| Nikola Jokić | **+4.6** | +5.0 | −0.3 |
-| Alex Caruso | **+4.0** | +0.9 | +3.1 |
-| Joel Embiid | **+3.7** | +2.1 | +1.6 |
-| Jalen Suggs | **+3.7** | +0.1 | +3.6 |
-| Chet Holmgren | **+3.6** | +0.2 | +3.3 |
-| Julian Champagnie | **+3.3** | +1.6 | +1.7 |
-| Payton Pritchard | **+3.3** | +2.4 | +0.9 |
+<!-- leaderboard:start -->
+<!-- leaderboard:end -->
 
 ## The trick: incremental Gram updates
 
