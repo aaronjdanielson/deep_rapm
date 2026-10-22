@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/rolling_rapm.png" alt="Rolling RAPM, 2018–19 through opening week 2026–27: the top 20 players by current estimate, with playoff, preseason and off-season windows shaded" width="900">
+  <img src="assets/rolling_rapm.png" alt="Rolling RAPM for today's top 10 players: every week since 2019 on the left, the last six months zoomed in on the right, with playoff, preseason and off-season windows shaded" width="920">
 </p>
 
 <h1 align="center">deep-rapm</h1>
@@ -22,7 +22,7 @@ refit every week of basketball since 2018 in under a minute.</p>
   <a href="#the-model"><b>The model</b></a>
 </p>
 
-*The chart above: nine seasons of rolling RAPM for the current top 20, one ridge fit per week. Gold bands are playoffs, blue bands are preseason (weighted at 0.20), grey bands are the off-season — including the thin blue sliver in July 2020, which is the COVID bubble scrimmages.*
+*Today's top 10, one ridge fit per week. Left: every week since 2019. Right: the last six months on their own scale — the 2026 playoffs (gold), a summer off-season (grey) in which the estimates hold nearly still, and the 2026–27 preseason (blue, weighted at 0.20) moving them again. The dashed box on the left marks the zoomed window.*
 
 ---
 
@@ -45,6 +45,78 @@ pip install "deep-rapm[viz]"
 ## Current leaderboard
 
 <!-- leaderboard:start -->
+The most recent weekly fit, using every regular-season, playoff and preseason possession through **October 20, 2026**. Values are points per 100 possessions relative to an average player; positive DRAPM is good defense. Ranked: players who have appeared in a game in the past year.
+
+### Top 25 overall
+
+| # | Player | RAPM | ORAPM | DRAPM |
+|--:|---|--:|--:|--:|
+| 1 | Shai Gilgeous-Alexander | **+6.6** | +2.6 | +4.0 |
+| 2 | Victor Wembanyama | **+5.0** | +0.9 | +4.1 |
+| 3 | Giannis Antetokounmpo | **+5.0** | +5.0 | +0.0 |
+| 4 | Nikola Jokić | **+4.6** | +5.0 | −0.3 |
+| 5 | Alex Caruso | **+4.0** | +0.9 | +3.1 |
+| 6 | Joel Embiid | **+3.7** | +2.1 | +1.6 |
+| 7 | Jalen Suggs | **+3.7** | +0.0 | +3.6 |
+| 8 | Chet Holmgren | **+3.5** | +0.2 | +3.3 |
+| 9 | Julian Champagnie | **+3.3** | +1.6 | +1.7 |
+| 10 | Payton Pritchard | **+3.3** | +2.4 | +0.9 |
+| 11 | Paul George | **+3.3** | +2.0 | +1.3 |
+| 12 | Zion Williamson | **+3.3** | +1.2 | +2.1 |
+| 13 | Jimmy Butler III | **+3.2** | +4.0 | −0.8 |
+| 14 | De'Aaron Fox | **+3.2** | +1.7 | +1.5 |
+| 15 | Ausar Thompson | **+3.2** | −0.7 | +3.9 |
+| 16 | Dylan Harper | **+3.1** | −1.6 | +4.7 |
+| 17 | Aaron Gordon | **+3.1** | +1.9 | +1.2 |
+| 18 | Stephen Curry | **+3.0** | +4.4 | −1.4 |
+| 19 | Luka Dončić | **+3.0** | +3.3 | −0.3 |
+| 20 | Jalen Brunson | **+2.9** | +1.5 | +1.4 |
+| 21 | Kawhi Leonard | **+2.9** | +3.3 | −0.5 |
+| 22 | Kyrie Irving | **+2.9** | +4.6 | −1.7 |
+| 23 | Paul Reed | **+2.7** | −0.4 | +3.2 |
+| 24 | Tobias Harris | **+2.6** | +1.6 | +1.0 |
+| 25 | Tyrese Haliburton | **+2.6** | +5.6 | −3.0 |
+
+<table>
+<tr>
+<td valign="top" width="50%">
+
+### Top 10 offense
+
+| # | Player | ORAPM | RAPM |
+|--:|---|--:|--:|
+| 1 | Tyrese Haliburton | **+5.6** | +2.6 |
+| 2 | Giannis Antetokounmpo | **+5.0** | +5.0 |
+| 3 | Nikola Jokić | **+5.0** | +4.6 |
+| 4 | Kyrie Irving | **+4.6** | +2.9 |
+| 5 | Stephen Curry | **+4.4** | +3.0 |
+| 6 | Michael Porter Jr. | **+4.3** | +0.4 |
+| 7 | Jimmy Butler III | **+4.0** | +3.2 |
+| 8 | Darius Garland | **+3.9** | +2.0 |
+| 9 | Trae Young | **+3.8** | −0.1 |
+| 10 | Nikola Vučević | **+3.7** | +0.9 |
+
+</td>
+<td valign="top" width="50%">
+
+### Top 10 defense
+
+| # | Player | DRAPM | RAPM |
+|--:|---|--:|--:|
+| 1 | Dylan Harper | **+4.7** | +3.1 |
+| 2 | Daniss Jenkins | **+4.2** | +1.3 |
+| 3 | Victor Wembanyama | **+4.1** | +5.0 |
+| 4 | VJ Edgecombe | **+4.1** | +2.2 |
+| 5 | Shai Gilgeous-Alexander | **+4.0** | +6.6 |
+| 6 | Collin Murray-Boyles | **+4.0** | +2.5 |
+| 7 | Ausar Thompson | **+3.9** | +3.2 |
+| 8 | Jaylen Clark | **+3.7** | +1.7 |
+| 9 | Jalen Suggs | **+3.6** | +3.7 |
+| 10 | Chet Holmgren | **+3.3** | +3.5 |
+
+</td>
+</tr>
+</table>
 <!-- leaderboard:end -->
 
 ## The trick: incremental Gram updates

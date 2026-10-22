@@ -212,6 +212,49 @@ def _phase_windows(
     return windows
 
 
+#: Line styles by rank block: ranks 1–10 solid, 11–20 dashed, 21–30 dotted.
+#: Colors repeat across blocks, so style keeps every series distinguishable.
+_RANK_LINESTYLES = ["-", (0, (5, 2)), (0, (1, 1.6))]
+
+_INK, _INK_MUTED, _GRID = "#1f2328", "#656d76", "#e6e8eb"
+
+
+def _spread_labels(ys: list[float], min_gap: float) -> list[float]:
+    """Nudge label y-positions apart by at least *min_gap*, keeping their order.
+
+    Only colliding labels move: each run of overlapping labels is spaced
+    evenly around the mean of its members' true values, and runs that grow
+    into each other merge, until nothing overlaps. Touching labels count as
+    one run, so a spaced run never splits back apart (which would oscillate).
+    """
+    import numpy as np
+
+    ys = np.asarray(ys, dtype=float)
+    order = np.argsort(ys)
+    true = ys[order]
+    pos = true.copy()
+    for _ in range(len(pos) + 1):
+        clusters = [[0]]
+        for i in range(1, len(pos)):
+            if pos[i] - pos[i - 1] < min_gap + 1e-9:
+                clusters[-1].append(i)
+            else:
+                clusters.append([i])
+        changed = False
+        for c in clusters:
+            if len(c) > 1:
+                start = true[c].mean() - (len(c) - 1) * min_gap / 2
+                new = start + np.arange(len(c)) * min_gap
+                if not np.allclose(pos[c], new):
+                    pos[c] = new
+                    changed = True
+        if not changed:
+            break
+    out = np.empty_like(pos)
+    out[order] = pos
+    return out.tolist()
+
+
 def plot_rolling(
     df: pd.DataFrame,
     metric: str = "rapm",
@@ -219,87 +262,175 @@ def plot_rolling(
     ci_window: int = 12,
     output: Path | None = None,
     phase_windows: dict[str, list[tuple[pd.Timestamp, pd.Timestamp]]] | None = None,
+    recent_days: int = 183,
 ) -> None:
     """
+    Two panels: the full multi-year trajectory (left) and the last
+    *recent_days* zoomed on their own y-scale (right, with direct labels).
+
     ci_window : number of evaluation dates used to compute the local ±1σ band.
                 At step_days=7 the default of 12 ≈ a 12-week (3-month) window.
     """
+    from matplotlib.patches import Patch, Rectangle
+    from matplotlib.transforms import blended_transform_factory
     from scipy.ndimage import gaussian_filter1d
 
     last_date = df["date"].max()
     final     = df[df["date"] == last_date].nlargest(top_n, metric)
     top_ids   = final["player_id"].tolist()
     name_map  = final.set_index("player_id")["player_name"].to_dict()
+    colors    = plt.cm.tab10.colors
+    metric_label = {"rapm": "RAPM", "orapm": "ORAPM", "drapm": "DRAPM"}.get(
+        metric, metric.upper())
 
-    fig, ax = plt.subplots(figsize=(15, 8))
-    fig.patch.set_facecolor("#f8f9fa")
-    ax.set_facecolor("#f8f9fa")
-    colors = plt.cm.tab10.colors
-
+    # Smoothing and ribbons are computed once over the full history, so the
+    # zoom panel shows exactly the same curves as the long view.
+    series = []
     for i, pid in enumerate(top_ids):
         pdata  = df[df["player_id"] == pid].sort_values("date")
-        dates  = pdata["date"].values
-        vals   = pdata[metric].values
-        color  = colors[i % len(colors)]
+        vals   = pdata[metric].values.astype(float)
+        smooth = gaussian_filter1d(vals, sigma=1.5)
+        sd     = pd.Series(vals).rolling(ci_window, center=True, min_periods=3).std()
+        sd     = sd.fillna(sd.median()).values
+        series.append({
+            "dates":   pdata["date"].values,
+            "smooth":  smooth,
+            "lo":      smooth - sd,
+            "hi":      smooth + sd,
+            "current": float(vals[-1]),
+            "name":    name_map[pid],
+            "color":   colors[i % len(colors)],
+            "style":   _RANK_LINESTYLES[min(i // len(colors), len(_RANK_LINESTYLES) - 1)],
+        })
 
-        smooth = gaussian_filter1d(vals.astype(float), sigma=1.5)
+    xlo     = df["date"].min()
+    zoom_lo = last_date - pd.Timedelta(days=recent_days)
 
-        series = pd.Series(vals)
-        roll   = series.rolling(ci_window, center=True, min_periods=3)
-        lo     = (smooth - roll.std().fillna(roll.std().median())).values
-        hi     = (smooth + roll.std().fillna(roll.std().median())).values
-
-        ax.fill_between(dates, lo, hi, color=color, alpha=0.12, linewidth=0)
-        ax.plot(dates, smooth, color=color, linewidth=2.0, alpha=0.95, label=name_map[pid])
-        ax.scatter([dates[-1]], [smooth[-1]], color=color, s=40, zorder=5)
-
-    ax.axhline(0, color="#555555", linewidth=0.9, linestyle="--", alpha=0.45)
-
-    # Season-phase shading: playoffs (gold), preseason (blue), off-season (grey).
-    xlo, xhi = df["date"].min(), df["date"].max()
+    band_spans: list[tuple[pd.Timestamp, pd.Timestamp, str, float]] = []
     band_handles = []
     if phase_windows:
-        from matplotlib.patches import Patch
         for phase, (color, alpha, label) in PHASE_STYLE.items():
-            spans = [(max(s, xlo), min(e, xhi))
+            spans = [(max(s, xlo), min(e, last_date))
                      for s, e in phase_windows.get(phase, [])]
             spans = [(s, e) for s, e in spans if s < e]
-            for s, e in spans:
-                ax.axvspan(s, e, color=color, alpha=alpha, linewidth=0)
+            band_spans += [(s, e, color, alpha) for s, e in spans]
             if spans:
                 # Legend chips use a stronger alpha so the hue stays readable.
                 band_handles.append(
-                    Patch(facecolor=color, alpha=min(3 * alpha, 1.0), label=label)
-                )
+                    Patch(facecolor=color, alpha=min(3 * alpha, 1.0), label=label))
     else:
         # Fallback without data access: fixed approximate off-season spans.
-        years = range(df["date"].dt.year.min(), df["date"].dt.year.max() + 1)
-        for yr in years:
-            ax.axvspan(pd.Timestamp(f"{yr}-04-20"), pd.Timestamp(f"{yr}-10-15"),
-                       color="grey", alpha=0.06, linewidth=0)
+        for yr in range(xlo.year, last_date.year + 1):
+            band_spans.append((pd.Timestamp(f"{yr}-04-20"), pd.Timestamp(f"{yr}-10-15"),
+                               "grey", 0.06))
 
-    ax.xaxis.set_major_formatter(mdates.DateFormatter("%b '%y"))
-    ax.xaxis.set_major_locator(mdates.MonthLocator(bymonth=[1, 4, 7, 10]))
-    plt.setp(ax.xaxis.get_majorticklabels(), rotation=35, ha="right", fontsize=9)
+    def _draw(ax, linewidth: float) -> None:
+        for s, e, color, alpha in band_spans:
+            ax.axvspan(s, e, color=color, alpha=alpha, linewidth=0, zorder=0)
+        for s in series:
+            ax.fill_between(s["dates"], s["lo"], s["hi"], color=s["color"],
+                            alpha=0.07, linewidth=0)
+            ax.plot(s["dates"], s["smooth"], color=s["color"], linewidth=linewidth,
+                    linestyle=s["style"], alpha=0.95,
+                    solid_capstyle="round", dash_capstyle="round")
+        ax.axhline(0, color="#8c959f", linewidth=0.9, zorder=1)
+        ax.tick_params(axis="x", which="major", labelsize=10.5, length=5)
+        ax.tick_params(axis="x", which="minor", length=3)
+        ax.tick_params(axis="y", labelsize=10.5, length=0)
+        ax.grid(True, axis="y", color=_GRID, linewidth=0.9)
+        ax.set_axisbelow(True)
+        ax.spines[["top", "right", "left"]].set_visible(False)
 
-    metric_label = {"rapm": "RAPM", "orapm": "ORAPM", "drapm": "DRAPM"}.get(metric, metric.upper())
-    ax.set_ylabel(f"{metric_label}  (pts / 100 possessions)", fontsize=12)
-    ax.set_title(f"Rolling {metric_label} — top {top_n} by current estimate  "
-                 f"(ribbon = ±1σ local variability)", fontsize=13, pad=14)
-    if band_handles:
-        band_legend = ax.legend(handles=band_handles, loc="lower right",
-                                fontsize=8, framealpha=0.9, edgecolor="#cccccc")
-        ax.add_artist(band_legend)
-    ax.legend(loc="upper left", fontsize=9, framealpha=0.9, edgecolor="#cccccc", ncol=2)
-    ax.grid(True, alpha=0.2, color="#aaaaaa")
-    ax.spines[["top", "right"]].set_visible(False)
-    fig.tight_layout()
+    rc = {
+        "font.family": "sans-serif",
+        "font.sans-serif": ["Helvetica Neue", "Helvetica", "Arial", "DejaVu Sans"],
+        "axes.edgecolor": "#c9ced4",
+        "xtick.color": _INK_MUTED,
+        "ytick.color": _INK_MUTED,
+    }
+    with plt.rc_context(rc):
+        fig = plt.figure(figsize=(16, 8.6))
+        fig.patch.set_facecolor("white")
+        gs = fig.add_gridspec(1, 2, width_ratios=[2.15, 1], wspace=0.10,
+                              left=0.05, right=0.80, top=0.82, bottom=0.08)
+        ax_all, ax_zoom = fig.add_subplot(gs[0]), fig.add_subplot(gs[1])
 
-    if output:
-        fig.savefig(output, dpi=150)
-        print(f"Saved → {output}")
-    else:
-        plt.show()
+        # Left: the multi-year trajectory.
+        _draw(ax_all, linewidth=1.5)
+        ax_all.set_xlim(xlo - pd.Timedelta(days=20), last_date + pd.Timedelta(days=12))
+        ax_all.xaxis.set_major_locator(mdates.YearLocator())
+        ax_all.xaxis.set_major_formatter(mdates.DateFormatter("%Y"))
+        ax_all.xaxis.set_minor_locator(mdates.MonthLocator(bymonth=[4, 7, 10]))
+        ax_all.set_ylabel(f"{metric_label}, points per 100 possessions",
+                          fontsize=11, color=_INK_MUTED, labelpad=10)
+        ax_all.set_title(f"Since {xlo.year}", loc="left", fontsize=12,
+                         color=_INK, pad=10)
+
+        # Right: the last few months, on their own y-scale.
+        _draw(ax_zoom, linewidth=2.3)
+        ax_zoom.set_xlim(zoom_lo, last_date + pd.Timedelta(days=4))
+        ax_zoom.xaxis.set_major_locator(mdates.MonthLocator())
+        ax_zoom.xaxis.set_major_formatter(mdates.DateFormatter("%b"))
+        in_win = [(s["dates"] >= zoom_lo.to_datetime64()) for s in series]
+        lo = min(min(s["lo"][m].min(), s["current"])
+                 for s, m in zip(series, in_win) if m.any())
+        hi = max(max(s["hi"][m].max(), s["current"])
+                 for s, m in zip(series, in_win) if m.any())
+        pad = 0.06 * (hi - lo)
+        ax_zoom.set_ylim(lo - pad, hi + pad)
+        months = round(recent_days / 30.5)
+        ax_zoom.set_title(f"Last {months} months, zoomed", loc="left", fontsize=12,
+                          color=_INK, pad=10)
+        # End dots mark the current (unsmoothed) estimate, matching the labels.
+        for s in series:
+            ax_zoom.scatter([s["dates"][-1]], [s["current"]], color=s["color"],
+                            s=38, zorder=5, edgecolor="white", linewidth=1.2)
+
+        # Outline the zoomed window on the long view.
+        ax_all.add_patch(Rectangle(
+            (mdates.date2num(zoom_lo), lo - pad),
+            mdates.date2num(last_date + pd.Timedelta(days=4)) - mdates.date2num(zoom_lo),
+            hi - lo + 2 * pad,
+            fill=False, edgecolor="#57606a", linewidth=1.0,
+            linestyle=(0, (3, 2)), zorder=6))
+
+        # Direct labels beside the zoom panel, nudged apart, with leader lines.
+        fig.canvas.draw()
+        y0, y1 = ax_zoom.get_ylim()
+        px_per_unit = ax_zoom.get_window_extent().height / (y1 - y0)
+        min_gap = 9.0 * fig.dpi / 72 * 1.3 / px_per_unit
+        label_ys = _spread_labels([s["current"] for s in series], min_gap)
+        to_label = blended_transform_factory(ax_zoom.transAxes, ax_zoom.transData)
+        for s, ly in zip(series, label_ys):
+            ax_zoom.annotate(
+                f"{s['name']}  {s['current']:+.1f}".replace("-", "−"),
+                xy=(s["dates"][-1], s["current"]), xycoords="data",
+                xytext=(1.05, ly), textcoords=to_label,
+                fontsize=9, color=_INK, va="center", ha="left",
+                annotation_clip=False,
+                arrowprops=dict(arrowstyle="-", color=s["color"], linewidth=1.0,
+                                shrinkA=3, shrinkB=2, alpha=0.9),
+            )
+
+        fig.text(0.05, 0.945, f"Rolling {metric_label}: the top {top_n} today, "
+                 f"and how they got there",
+                 fontsize=18, fontweight="bold", color=_INK, ha="left")
+        fig.text(0.05, 0.905,
+                 f"Weekly ridge fits through {last_date:%b} {last_date.day}, "
+                 f"{last_date:%Y}  ·  relative to an average player  ·  "
+                 f"ribbon = ±1σ local variability",
+                 fontsize=11, color=_INK_MUTED, ha="left")
+        if band_handles:
+            fig.legend(handles=band_handles, loc="upper right",
+                       bbox_to_anchor=(0.80, 0.925), ncol=len(band_handles),
+                       frameon=False, fontsize=10, handlelength=1.4,
+                       handleheight=1.0, columnspacing=1.4, labelcolor=_INK_MUTED)
+
+        if output:
+            fig.savefig(output, dpi=150, facecolor="white")
+            print(f"Saved → {output}")
+        else:
+            plt.show()
 
 
 # ---------------------------------------------------------------------------
