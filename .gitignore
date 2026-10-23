@@ -1,11 +1,14 @@
-# Data (user-generated, not part of the package)
-data/
-pbp_cache/
-checkpoints/
+# Data and generated outputs (user-generated, not part of the package).
+# Root-anchored: an unanchored `data/` also matched the deep_rapm/data/ package.
+/data/
+/pbp_cache/
+/checkpoints/
+/outputs/
 
 # Logs
 *.log
 nohup.out
+claude.md
 
 # Python
 __pycache__/
@@ -25,17 +28,13 @@ build/
 
 # LaTeX source and build artifacts (kept local)
 *.tex
-*.pdf
+#*.pdf
 *.aux
 *.out
 *.fls
 *.fdb_latexmk
 *.synctex.gz
 
-# Root-level scratch / prototype scripts (not part of the package)
-deep_rapm_model.py
-example.py
-lineup_gnn.py
-modules.py
-set_transformer.py
-simulate_q2.py
+# Scratch / prototype scripts (not part of the package)
+experiments 
+#/prototypes/

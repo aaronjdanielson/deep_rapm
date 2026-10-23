@@ -460,9 +460,20 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="Include preseason possessions, weighted by --preseason-weight.")
     p.add_argument("--preseason-weight", type=float, default=0.20,
                    help="Per-possession weight for preseason (default 0.20).")
+    p.add_argument("--exclude-flagged", type=Path, nargs="?", default=None,
+                   const=Path("data/quality/game_quality.parquet"), metavar="QUALITY",
+                   help="Leave out games marked severity=error in a quality table "
+                        "(scripts/validate_data.py; default path if no value given).")
     p.add_argument("--no-incremental",   action="store_true", default=False,
                    help="Full recompute at each date (slow — for validation only).")
     return p
+
+
+def _flagged_games(quality_path: Path | None) -> set[str] | None:
+    if quality_path is None:
+        return None
+    q = pd.read_parquet(quality_path, columns=["game_id", "severity"])
+    return set(q.loc[q["severity"] == "error", "game_id"])
 
 
 def main() -> None:
@@ -494,6 +505,7 @@ def main() -> None:
             include_playoffs=args.include_playoffs,
             include_preseason=args.include_preseason,
             preseason_weight=args.preseason_weight,
+            exclude_game_ids=_flagged_games(args.exclude_flagged),
         )
 
     if args.cache and not args.cache.exists():

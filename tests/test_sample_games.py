@@ -62,8 +62,9 @@ def _build_sample(sample_size: int, seed: int) -> list[tuple[str, str]]:
         parquets = sorted(season_dir.glob("possessions_*.parquet"))
         if not parquets:
             continue
-        df = pd.read_parquet(parquets[0], columns=["game_id"])
-        game_ids = df["game_id"].unique().tolist()
+        game_ids = sorted(set().union(*(
+            pd.read_parquet(p, columns=["game_id"])["game_id"].unique() for p in parquets
+        )))
         n = min(sample_size, len(game_ids))
         sample = rng.sample(game_ids, n)
         season_label = season_dir.name
@@ -81,7 +82,8 @@ def _get_parquet(season: str) -> pd.DataFrame:
         parquets = sorted(Path("data", season).glob("possessions_*.parquet"))
         if not parquets:
             raise FileNotFoundError(f"No parquet found for season {season}")
-        _parquet_store[season] = pd.read_parquet(parquets[0])
+        _parquet_store[season] = pd.concat(
+            [pd.read_parquet(p) for p in parquets], ignore_index=True)
     return _parquet_store[season]
 
 

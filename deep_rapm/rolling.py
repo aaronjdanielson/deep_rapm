@@ -39,7 +39,7 @@ Example
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
+from typing import Iterable, Optional
 
 import numpy as np
 import pandas as pd
@@ -199,6 +199,7 @@ def fit_rolling_rapm(
     include_playoffs: bool = False,
     include_preseason: bool = False,
     preseason_weight: float = 0.20,
+    exclude_game_ids: Optional[Iterable[str]] = None,
     verbose: bool = True,
 ) -> pd.DataFrame:
     """
@@ -222,6 +223,8 @@ def fit_rolling_rapm(
                         ``preseason_weight``).
     preseason_weight  : Multiplicative down-weight applied to every preseason
                         possession (default 0.20).
+    exclude_game_ids  : Games to leave out entirely, e.g. those a quality table
+                        (deep_rapm.data.validate) marks as errors.
     verbose           : Print progress.
 
     Returns
@@ -276,6 +279,12 @@ def fit_rolling_rapm(
             frames.append(df_pq)
 
     all_poss = pd.concat(frames, ignore_index=True)
+    if exclude_game_ids:
+        drop = all_poss["game_id"].isin(set(exclude_game_ids))
+        if verbose:
+            print(f"  Excluding {all_poss.loc[drop, 'game_id'].nunique()} flagged games "
+                  f"({drop.sum():,} possessions)")
+        all_poss = all_poss[~drop]
     all_poss["game_date"] = pd.to_datetime(all_poss["game_date"])
     all_poss = all_poss.sort_values("game_date").reset_index(drop=True)
 

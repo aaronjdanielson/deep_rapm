@@ -45,37 +45,37 @@ pip install "deep-rapm[viz]"
 ## Current leaderboard
 
 <!-- leaderboard:start -->
-The most recent weekly fit, using every regular-season, playoff and preseason possession through **October 20, 2026**. Values are points per 100 possessions relative to an average player; positive DRAPM is good defense. Ranked: players who have appeared in a game in the past year.
+The most recent weekly fit, using every regular-season, playoff and preseason possession through **October 21, 2026**. Values are points per 100 possessions relative to an average player; positive DRAPM is good defense. Ranked: players who have appeared in a game in the past year.
 
 ### Top 25 overall
 
 | # | Player | RAPM | ORAPM | DRAPM |
 |--:|---|--:|--:|--:|
-| 1 | Shai Gilgeous-Alexander | **+6.6** | +2.6 | +4.0 |
-| 2 | Victor Wembanyama | **+5.0** | +0.9 | +4.1 |
-| 3 | Giannis Antetokounmpo | **+5.0** | +5.0 | +0.0 |
-| 4 | Nikola Jokić | **+4.6** | +5.0 | −0.3 |
-| 5 | Alex Caruso | **+4.0** | +0.9 | +3.1 |
-| 6 | Joel Embiid | **+3.7** | +2.1 | +1.6 |
-| 7 | Jalen Suggs | **+3.7** | +0.0 | +3.6 |
-| 8 | Chet Holmgren | **+3.5** | +0.2 | +3.3 |
-| 9 | Julian Champagnie | **+3.3** | +1.6 | +1.7 |
-| 10 | Payton Pritchard | **+3.3** | +2.4 | +0.9 |
-| 11 | Paul George | **+3.3** | +2.0 | +1.3 |
-| 12 | Zion Williamson | **+3.3** | +1.2 | +2.1 |
-| 13 | Jimmy Butler III | **+3.2** | +4.0 | −0.8 |
-| 14 | De'Aaron Fox | **+3.2** | +1.7 | +1.5 |
-| 15 | Ausar Thompson | **+3.2** | −0.7 | +3.9 |
-| 16 | Dylan Harper | **+3.1** | −1.6 | +4.7 |
-| 17 | Aaron Gordon | **+3.1** | +1.9 | +1.2 |
-| 18 | Stephen Curry | **+3.0** | +4.4 | −1.4 |
-| 19 | Luka Dončić | **+3.0** | +3.3 | −0.3 |
-| 20 | Jalen Brunson | **+2.9** | +1.5 | +1.4 |
-| 21 | Kawhi Leonard | **+2.9** | +3.3 | −0.5 |
-| 22 | Kyrie Irving | **+2.9** | +4.6 | −1.7 |
-| 23 | Paul Reed | **+2.7** | −0.4 | +3.2 |
-| 24 | Tobias Harris | **+2.6** | +1.6 | +1.0 |
-| 25 | Tyrese Haliburton | **+2.6** | +5.6 | −3.0 |
+| 1 | Victor Wembanyama | **+6.6** | +1.6 | +5.1 |
+| 2 | Chet Holmgren | **+6.3** | +3.0 | +3.3 |
+| 3 | Shai Gilgeous-Alexander | **+6.2** | +3.6 | +2.6 |
+| 4 | Nikola Jokić | **+6.2** | +5.0 | +1.3 |
+| 5 | Giannis Antetokounmpo | **+5.2** | +3.4 | +1.7 |
+| 6 | Alex Caruso | **+5.1** | +0.6 | +4.5 |
+| 7 | Ajay Mitchell | **+4.8** | +2.3 | +2.5 |
+| 8 | Kawhi Leonard | **+4.4** | +4.0 | +0.4 |
+| 9 | Stephen Curry | **+4.1** | +4.8 | −0.7 |
+| 10 | Aaron Gordon | **+4.0** | +1.8 | +2.2 |
+| 11 | Julian Champagnie | **+3.7** | +2.6 | +1.1 |
+| 12 | Ausar Thompson | **+3.6** | +1.1 | +2.5 |
+| 13 | Dylan Harper | **+3.6** | +1.7 | +1.9 |
+| 14 | Jimmy Butler III | **+3.5** | +1.9 | +1.7 |
+| 15 | Luka Dončić | **+3.4** | +3.7 | −0.2 |
+| 16 | Amen Thompson | **+3.4** | +1.3 | +2.1 |
+| 17 | Jarrett Allen | **+3.4** | +2.2 | +1.2 |
+| 18 | Donovan Mitchell | **+3.4** | +2.3 | +1.1 |
+| 19 | Franz Wagner | **+3.4** | +1.1 | +2.3 |
+| 20 | Karl-Anthony Towns | **+3.4** | +2.6 | +0.8 |
+| 21 | Pascal Siakam | **+3.4** | +1.6 | +1.7 |
+| 22 | Marcus Smart | **+3.2** | +0.6 | +2.6 |
+| 23 | Isaiah Hartenstein | **+3.2** | +1.9 | +1.3 |
+| 24 | Lauri Markkanen | **+3.2** | +1.6 | +1.6 |
+| 25 | Tyrese Haliburton | **+3.2** | +2.6 | +0.6 |
 
 <table>
 <tr>
@@ -85,16 +85,16 @@ The most recent weekly fit, using every regular-season, playoff and preseason po
 
 | # | Player | ORAPM | RAPM |
 |--:|---|--:|--:|
-| 1 | Tyrese Haliburton | **+5.6** | +2.6 |
-| 2 | Giannis Antetokounmpo | **+5.0** | +5.0 |
-| 3 | Nikola Jokić | **+5.0** | +4.6 |
-| 4 | Kyrie Irving | **+4.6** | +2.9 |
-| 5 | Stephen Curry | **+4.4** | +3.0 |
-| 6 | Michael Porter Jr. | **+4.3** | +0.4 |
-| 7 | Jimmy Butler III | **+4.0** | +3.2 |
-| 8 | Darius Garland | **+3.9** | +2.0 |
-| 9 | Trae Young | **+3.8** | −0.1 |
-| 10 | Nikola Vučević | **+3.7** | +0.9 |
+| 1 | Nikola Jokić | **+5.0** | +6.2 |
+| 2 | Stephen Curry | **+4.8** | +4.1 |
+| 3 | Kawhi Leonard | **+4.0** | +4.4 |
+| 4 | LaMelo Ball | **+3.9** | +2.8 |
+| 5 | Luka Dončić | **+3.7** | +3.4 |
+| 6 | Jamal Murray | **+3.6** | +1.9 |
+| 7 | Shai Gilgeous-Alexander | **+3.6** | +6.2 |
+| 8 | Giannis Antetokounmpo | **+3.4** | +5.2 |
+| 9 | Chet Holmgren | **+3.0** | +6.3 |
+| 10 | Devin Booker | **+2.8** | +2.5 |
 
 </td>
 <td valign="top" width="50%">
@@ -103,16 +103,16 @@ The most recent weekly fit, using every regular-season, playoff and preseason po
 
 | # | Player | DRAPM | RAPM |
 |--:|---|--:|--:|
-| 1 | Dylan Harper | **+4.7** | +3.1 |
-| 2 | Daniss Jenkins | **+4.2** | +1.3 |
-| 3 | Victor Wembanyama | **+4.1** | +5.0 |
-| 4 | VJ Edgecombe | **+4.1** | +2.2 |
-| 5 | Shai Gilgeous-Alexander | **+4.0** | +6.6 |
-| 6 | Collin Murray-Boyles | **+4.0** | +2.5 |
-| 7 | Ausar Thompson | **+3.9** | +3.2 |
-| 8 | Jaylen Clark | **+3.7** | +1.7 |
-| 9 | Jalen Suggs | **+3.6** | +3.7 |
-| 10 | Chet Holmgren | **+3.3** | +3.5 |
+| 1 | Victor Wembanyama | **+5.1** | +6.6 |
+| 2 | Alex Caruso | **+4.5** | +5.1 |
+| 3 | Rudy Gobert | **+3.9** | +3.0 |
+| 4 | Chet Holmgren | **+3.3** | +6.3 |
+| 5 | Jalen Suggs | **+2.9** | +2.4 |
+| 6 | Daniss Jenkins | **+2.8** | +3.0 |
+| 7 | Shai Gilgeous-Alexander | **+2.6** | +6.2 |
+| 8 | Marcus Smart | **+2.6** | +3.2 |
+| 9 | Ajay Mitchell | **+2.5** | +4.8 |
+| 10 | Ausar Thompson | **+2.5** | +3.6 |
 
 </td>
 </tr>
@@ -157,7 +157,7 @@ pip install "deep-rapm[viz]"
 
 # Rolling RAPM: fit every week since 2018, cache the results, draw the chart
 rolling-rapm --include-playoffs --include-preseason \
-  --cache rolling_cache.parquet --output rolling_rapm.png \
+  --cache outputs/rolling_cache.parquet --output outputs/rolling_rapm.png \
   --step-days 7 --half-life 365 --top 20
 
 # One-shot RAPM over chosen seasons
@@ -210,7 +210,7 @@ Everything comes from public NBA sources and lands in per-season parquet files �
 | Source | Role |
 |---|---|
 | `pbpstats` (enhanced play-by-play via `data.nba.com`) | Primary per-game possession extraction |
-| `nba_api` `PlayByPlayV3` + `BoxScoreTraditionalV3` | Automatic fallback when pbpstats returns nothing (recent seasons, Akamai blocks); score-delta point counting, ~97% accuracy vs. final box scores |
+| `nba_api` `PlayByPlayV3` + `BoxScoreTraditionalV3` | Automatic fallback when pbpstats returns nothing (2025-26 on, Akamai blocks). Lineups are inferred from substitutions and box-score rosters — identical to the NBA's own rotation data on 100% of possessions in a 48-game check — and team points match official finals |
 | `nba_api` `LeagueGameLog` / `LeagueGameFinder` | Season schedules and nightly game discovery |
 | `nba_api` `CommonTeamRoster` / `CommonPlayerInfo` | Player names, positions, and the 1,457-player vocabulary |
 
@@ -220,7 +220,7 @@ collect-players --seasons 2024-25 2025-26   # player vocab + position table
 python scripts/collect_nightly.py           # cron target: yesterday's games → season parquets
 ```
 
-Collection is **idempotent**: each game is written once to `data/games/`, and the nightly merge appends only game IDs the season parquets don't already have. Current coverage: nine seasons, 2018-19 through 2026-27 — regular season, playoffs (play-in included), and 658 preseason games back to 2018.
+Collection is **idempotent**: each game is written once to `data/games/`, and the nightly merge appends only game IDs the season parquets don't already have. Current coverage: nine seasons, 2018-19 through 2026-27 — regular season, playoffs (play-in included), and 660 preseason games back to 2018. `scripts/validate_data.py` checks every game; 2021-22 onward has no regular-season or playoff game flagged as an error.
 
 ## The model
 
@@ -239,15 +239,25 @@ fit by weighted ridge regression as described above. The ridge penalty is what m
 
 ## What is in this repository
 
-| Path | What |
-|---|---|
-| `deep_rapm/rolling.py` | `IncrementalGramState` and `fit_rolling_rapm` — the incremental solver |
-| `deep_rapm/rapm.py` | Design-matrix construction, recency/competition weights, the exact ridge solve |
-| `deep_rapm/data/` | Possession extraction (pbpstats + nba_api fallback), season collection, player metadata |
-| `rolling_rapm.py` | CLI driver and the chart at the top of this page (`rolling-rapm` is the packaged equivalent) |
-| `scripts/collect_nightly.py` | Nightly cron entry: new games → per-game cache → season parquets |
-| `docs/incremental_rapm.md` | Derivation notes for the incremental update |
-| `tests/` | Possession-extraction, solver, and incremental-vs-full equivalence tests |
+```
+deep_rapm/            the package
+  rolling.py            IncrementalGramState + fit_rolling_rapm — the incremental solver
+  rapm.py               design matrix, recency/competition weights, exact ridge solve
+  data/                 possession extraction (pbpstats + nba_api fallback), seasons, players,
+                        and validate.py (data-quality checks)
+  scripts/              console entry points: rolling-rapm (the chart above), solve-rapm, collect-*
+scripts/              operator tools
+  collect_nightly.py    nightly cron: new games → per-game cache → season parquets
+  validate_data.py      per-game quality table: structural checks + box-score reconciliation
+  update_readme_leaderboard.py   regenerates the leaderboard tables on this page
+  legacy/               one-off backfill scripts, kept for reference
+tests/                possession extraction, solver, incremental-vs-full equivalence
+docs/                 derivation notes (incremental_rapm.md); papers/ holds LaTeX drafts
+experiments/          neural lineup-model research (not part of the package)
+assets/               images on this page
+```
+
+Generated and local-only (gitignored): `data/` (possessions, player tables), `outputs/` (rolling cache, charts, archived backups and logs), `pbp_cache/`, `checkpoints/`.
 
 ## License
 
