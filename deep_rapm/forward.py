@@ -118,8 +118,12 @@ def load_possessions(
     cfg: RapmConfig,
     data_dir: Path = Path("data"),
     exclude_game_ids: Optional[Iterable[str]] = None,
+    until: pd.Timestamp | str | None = None,
 ) -> pd.DataFrame:
-    """Every possession the config trains on, with season / kind / context_weight."""
+    """Every possession the config trains on, with season / kind / context_weight.
+
+    ``until`` drops games after that date, so models scored on different days
+    can be compared on the same data snapshot."""
     frames = []
     for season in cfg.seasons:
         for pq in sorted((Path(data_dir) / season).glob("possessions_*.parquet")):
@@ -138,6 +142,8 @@ def load_possessions(
     if exclude_game_ids:
         poss = poss[~poss["game_id"].isin(set(exclude_game_ids))]
     poss["game_date"] = pd.to_datetime(poss["game_date"])
+    if until is not None:
+        poss = poss[poss["game_date"] <= pd.Timestamp(until)]
     return poss.sort_values(["game_date", "game_id", "seconds_into_game"]).reset_index(drop=True)
 
 
@@ -278,16 +284,23 @@ def score_forward(
     first_origin: pd.Timestamp | str | None = None,
     exclude_game_ids: Optional[Iterable[str]] = None,
     nll: bool = True,
+    until: pd.Timestamp | str | None = None,
     verbose: bool = True,
 ) -> ForwardResult:
     t0 = time.time()
     vocab = pd.read_parquet(vocab_path)
     n_players = len(vocab) + 1
     n_cols = 2 * n_players + cfg.n_extra_cols
-    penalties = list(penalties or [(cfg.alpha, cfg.alpha_def_eff)])
+    own = (float(cfg.alpha), float(cfg.alpha_def_eff))
+    penalties = [tuple(float(a) for a in p) for p in (penalties or [own])]
+    # The predictive density is computed for the first penalty only, so the
+    # config's own penalty goes first.
+    if own in penalties:
+        penalties.remove(own)
+        penalties.insert(0, own)
     pen_vecs = [cfg.penalty(n_players, a_off, a_def) for a_off, a_def in penalties]
 
-    poss = load_possessions(cfg, data_dir, exclude_game_ids)
+    poss = load_possessions(cfg, data_dir, exclude_game_ids, until=until)
     if first_origin is None:
         first_origin = default_first_origin(data_dir, cfg.seasons)
     first_origin = pd.Timestamp(first_origin)
@@ -459,4 +472,5 @@ def paired_table(
                      "delta": delta.mean(), "se": se, "t": delta.mean() / se if se > 0 else 0.0,
                      "blocks": len(blocks), "se_block": se_block,
                      "t_block": delta.mean() / se_block if se_block and se_block > 0 else np.nan})
-    return pd.DataFrame(rows).sort_values("delta")
+    cols = key + ["origins", "delta", "se", "t", "blocks", "se_block", "t_block"]
+    return pd.DataFrame(rows, columns=cols).sort_values("delta")

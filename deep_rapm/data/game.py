@@ -123,6 +123,7 @@ def get_game_possessions(
     game_id: str,
     pbp_cache_dir: Optional[Path] = None,
     max_retries: int = 3,
+    meta: Optional[dict] = None,
 ) -> list[dict]:
     """
     Extract possession-level records for one game.
@@ -135,6 +136,9 @@ def get_game_possessions(
         Directory for pbpstats file cache.  Pass None to disable caching.
     max_retries : int
         Retry attempts for API calls.
+    meta : dict, optional
+        {game_date, home_team_id, away_team_id} if already known; skips the
+        BoxScoreSummaryV3 call, so a cached game can be re-parsed offline.
 
     Returns
     -------
@@ -164,7 +168,8 @@ def get_game_possessions(
         after the previous possession ended) so substitutions that happen
         during a live ball are captured correctly.
     """
-    meta = get_game_meta(game_id, max_retries=max_retries)
+    if meta is None:
+        meta = get_game_meta(game_id, max_retries=max_retries)
 
     pbp = None
     for attempt in range(max_retries):
@@ -278,9 +283,15 @@ def get_game_possessions(
         lineup = getattr(event, "lineup_ids", {}) or {}
         team_id = getattr(event, "team_id", None)
 
-        # Update running score whenever the event carries score fields
+        # Update running score whenever the event carries score fields. The
+        # scores *before* this event are kept for the possession-start
+        # snapshot below: event.home_score is the score after the event, so a
+        # possession opened by a made shot would otherwise record the margin
+        # including its own points (this bug affected every pbpstats-parsed
+        # game until 2026-10-25; scripts/fix_score_diff.py repaired the data).
         hs = getattr(event, "home_score", None)
         vs = getattr(event, "away_score", None)
+        prev_home, prev_away = running_home, running_away
         if hs is not None:
             running_home = int(hs)
         if vs is not None:
@@ -299,12 +310,12 @@ def get_game_possessions(
                 poss_start_period,
                 getattr(event, "clock", "0:00"),
             )
-            # Score diff from offense perspective *before* this event's
-            # points are added (running_home/away reflect previous events)
+            # Score diff from the offense's perspective before this event's
+            # points are added
             if poss_offense_id == meta["home_team_id"]:
-                poss_score_diff = running_home - running_away
+                poss_score_diff = prev_home - prev_away
             else:
-                poss_score_diff = running_away - running_home
+                poss_score_diff = prev_away - prev_home
 
         # ── Points accumulation ──────────────────────────────────────────────
         if team_id == poss_offense_id:

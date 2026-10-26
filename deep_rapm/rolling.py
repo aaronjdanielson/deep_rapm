@@ -420,6 +420,32 @@ def fit_rolling_rapm(
             print(f"  [{pct:5.1f}%]  {eval_date.date()}")
 
     df = pd.DataFrame(records)
+
+    # ── Posterior SDs at the final date ───────────────────────────────────────
+    # Reading the weights as precisions and the ridge as a N(0, s²/α) prior,
+    # the coefficients have covariance s²(G + αI)⁻¹. ORAPM = 100·α_off,
+    # DRAPM = −100·δ_def, so Var(RAPM) needs the off/def covariance with a
+    # minus sign. Conditional on the model (Gaussian noise, weights as
+    # precisions, α fixed); not calibrated against outcomes.
+    if len(df) and state.total_w > 0:
+        A = state.G.copy()
+        A.flat[::len(A) + 1] += alpha
+        A_inv = scipy.linalg.cho_solve(scipy.linalg.cho_factor(A, overwrite_a=True, check_finite=False),
+                                       np.eye(len(A)), check_finite=False)
+        s2 = state.noise_variance(beta)
+        d = np.diag(A_inv)
+        ar = np.arange(n_players)
+        sd_off = 100 * np.sqrt(s2 * d[:n_players])
+        sd_def = 100 * np.sqrt(s2 * d[n_players:])
+        sd_tot = 100 * np.sqrt(np.maximum(s2 * (d[:n_players] + d[n_players:] - 2 * A_inv[ar, n_players + ar]), 0))
+        idx = df["player_id"].map(pd.Series(player_vocab["player_idx"].values,
+                                            index=player_vocab["player_id"].values)).values
+        last = (df["date"] == df["date"].max()).values
+        for col, v in (("sd_orapm", sd_off), ("sd_drapm", sd_def), ("sd_rapm", sd_tot)):
+            df[col] = np.where(last, v[idx.astype(int)], np.nan)
+        if verbose:
+            print(f"  posterior SDs at {df['date'].max().date()} (s² = {s2:.3f})")
+
     if verbose:
         print(f"\nDone. {df['player_id'].nunique()} players tracked across "
               f"{df['date'].nunique()} dates.")
