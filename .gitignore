@@ -38,3 +38,6 @@ build/
 # Scratch / prototype scripts (not part of the package)
 experiments 
 #/prototypes/
+
+# project virtualenv
+/.venv/

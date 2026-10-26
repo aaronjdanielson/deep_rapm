@@ -69,15 +69,17 @@ import scipy.sparse as sp
 def _build_matrix_from_df(
     df: pd.DataFrame,
     player_vocab: pd.DataFrame,
+    home_court: bool = False,
 ) -> tuple[sp.csr_matrix, np.ndarray, np.ndarray, np.ndarray]:
     """
     Build the sparse RAPM indicator matrix from a possessions DataFrame.
 
     Returns
     -------
-    X       : csr_matrix (n_poss, 2 * n_players)
+    X       : csr_matrix (n_poss, 2 * n_players [+ 1])
                 cols 0 … n_players-1        — offense indicators
                 cols n_players … 2*n-1      — defense indicators
+                col 2*n (home_court only)   — +1 if the offense is the home team, −1 if not
     y       : ndarray (n_poss,) float32     — points scored
     n_off   : ndarray (n_players,) int      — offensive possession count per idx
     n_def   : ndarray (n_players,) int      — defensive possession count per idx
@@ -103,11 +105,16 @@ def _build_matrix_from_df(
     row_rep = np.repeat(np.arange(n, dtype=np.int32), 5)
     col_all = np.concatenate([off_idx.ravel(), n_players + def_idx.ravel()])
     row_all = np.concatenate([row_rep, row_rep])
+    val_all = np.ones(10 * n, dtype=np.float32)
+    n_cols  = 2 * n_players
+    if home_court:
+        sign = np.where(df["offense_team_id"].values == df["home_team_id"].values, 1.0, -1.0)
+        row_all = np.concatenate([row_all, np.arange(n, dtype=np.int32)])
+        col_all = np.concatenate([col_all, np.full(n, n_cols, dtype=col_all.dtype)])
+        val_all = np.concatenate([val_all, sign.astype(np.float32)])
+        n_cols += 1
 
-    X = sp.csr_matrix(
-        (np.ones(10 * n, dtype=np.float32), (row_all, col_all)),
-        shape=(n, 2 * n_players),
-    )
+    X = sp.csr_matrix((val_all, (row_all, col_all)), shape=(n, n_cols))
     y = df["points"].values.astype(np.float32)
     n_off = np.bincount(off_idx.ravel(), minlength=n_players)
     n_def = np.bincount(def_idx.ravel(), minlength=n_players)

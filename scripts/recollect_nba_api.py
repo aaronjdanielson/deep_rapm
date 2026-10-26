@@ -45,6 +45,10 @@ from deep_rapm.data.game_nba_api import (MIN_KEPT_SHARE, RAW_DIR, fetch_raw, gam
 
 STAGE = Path("data/games_v2")
 KIND_BY_CHAR = {"1": "preseason", "2": "regular_season", "4": "playoffs", "5": "playoffs"}
+#: The 30 franchises. Preseason exhibitions against other clubs (Real Madrid,
+#: Shanghai Sharks, …) are excluded: not NBA competition, and the opponents'
+#: rosters are missing from the box scores.
+NBA_TEAM_IDS = set(range(1610612737, 1610612767))
 SEASON_TYPES = ["Regular Season", "Playoffs", "PlayIn", "Pre Season"]
 
 
@@ -57,6 +61,8 @@ def schedule(season: str, refresh: bool = False) -> pd.DataFrame:
         return pd.read_parquet(path)
     frames = []
     for st in SEASON_TYPES:
+        if st == "PlayIn" and season < "2019-20":   # play-in began in the 2020 bubble
+            continue
         for attempt in range(3):
             try:
                 time.sleep(2 + 20 * attempt)
@@ -74,7 +80,7 @@ def schedule(season: str, refresh: bool = False) -> pd.DataFrame:
     logs["is_home"] = logs["MATCHUP"].str.contains(" vs. ")
     rows = []
     for gid, g in logs.groupby("GAME_ID"):
-        if len(g) != 2:
+        if len(g) != 2 or not set(g["TEAM_ID"].astype(int)) <= NBA_TEAM_IDS:
             continue
         g = g.sort_values("is_home", ascending=False)
         rows.append({"game_id": gid, "game_date": str(g["GAME_DATE"].iloc[0])[:10],
@@ -111,6 +117,7 @@ def _home_from_actions(actions: list[dict], teams: set[int]) -> int | None:
 def targets(season: str, mode: str) -> pd.DataFrame:
     """Schedule rows to (re-)collect for *season* under *mode*."""
     sched = schedule(season)
+    sched = sched[sched["home_team_id"].isin(NBA_TEAM_IDS) & sched["away_team_id"].isin(NBA_TEAM_IDS)]
     if mode == "full":
         return sched
     slug = season.replace("-", "_")
@@ -273,6 +280,7 @@ def cmd_swap(seasons: list[str]) -> None:
             combined = pd.concat(parts, ignore_index=True)
             combined = combined.sort_values(["game_id", "seconds_into_game"],
                                             kind="stable").reset_index(drop=True)
+            path.parent.mkdir(parents=True, exist_ok=True)   # brand-new season
             combined.to_parquet(path, index=False)
             csv = path.with_suffix(".csv")
             if csv.exists():

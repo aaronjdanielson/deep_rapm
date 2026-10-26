@@ -25,11 +25,12 @@ sys.path.insert(0, str(PROJECT_ROOT))
 import os
 os.chdir(PROJECT_ROOT)
 
-from deep_rapm.data.game import get_game_possessions
+from deep_rapm.data.game import get_game_meta, get_game_possessions
 from deep_rapm.data.game_nba_api import get_game_possessions_nba_api
 from nba_api.stats.endpoints import leaguegamefinder
 
 DATA_DIR  = Path("data")
+NBA_TEAM_IDS = set(range(1610612737, 1610612767))   # the 30 franchises
 GAMES_DIR = DATA_DIR / "games"
 GAMES_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -47,7 +48,10 @@ def get_game_ids_for_date(target_date: date) -> list[str]:
         return []
     # Only include games with a final result (WL not null)
     final = df[df["WL"].notna()]
-    return sorted(final["GAME_ID"].unique().tolist())
+    # Preseason exhibitions against non-NBA clubs are not collected.
+    all_nba = final.groupby("GAME_ID")["TEAM_ID"].apply(
+        lambda s: s.astype(int).isin(NBA_TEAM_IDS).all())
+    return sorted(g for g in final["GAME_ID"].unique().tolist() if all_nba.get(g, False))
 
 
 def collect_game(game_id: str) -> int:
@@ -66,16 +70,8 @@ def collect_game(game_id: str) -> int:
     except Exception as e1:
         print(f"    pbpstats failed ({e1}), trying nba_api…")
         try:
-            # nba_api fallback requires meta dict; build minimal one
-            from nba_api.stats.endpoints import boxscoresummaryv2
-            summary = boxscoresummaryv2.BoxScoreSummaryV2(game_id=game_id)
-            gs = summary.get_data_frames()[0].iloc[0]
-            meta = {
-                "game_id":      game_id,
-                "game_date":    str(gs.get("GAME_DATE_EST", ""))[:10],
-                "home_team_id": int(gs.get("HOME_TEAM_ID", 0)),
-                "away_team_id": int(gs.get("VISITOR_TEAM_ID", 0)),
-            }
+            # BoxScoreSummaryV2 returns an empty body for 2026-27 games; V3 works.
+            meta = {"game_id": game_id, **get_game_meta(game_id)}
             possessions = get_game_possessions_nba_api(game_id, meta)
         except Exception as e2:
             print(f"    nba_api also failed ({e2}) — skipping {game_id}")

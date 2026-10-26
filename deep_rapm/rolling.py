@@ -43,6 +43,7 @@ from typing import Iterable, Optional
 
 import numpy as np
 import pandas as pd
+import scipy.linalg
 import scipy.sparse as sp
 
 from .rapm import _build_matrix_from_df, _competition_weights, solve_ridge
@@ -80,22 +81,45 @@ class IncrementalGramState:
         beta, intercept = state.solve()
     """
 
-    def __init__(self, n_cols: int, alpha: float, half_life_days: float) -> None:
-        self.alpha          = alpha
-        self.half_life_days = half_life_days
+    def __init__(
+        self,
+        n_cols: int,
+        alpha: float,
+        half_life_days: float,
+        n_players: int | None = None,
+        offseason_discount: float = 1.0,
+    ) -> None:
+        self.alpha              = alpha
+        self.half_life_days     = half_life_days
+        self.offseason_discount = offseason_discount
         self.G              = np.zeros((n_cols, n_cols), dtype=np.float64)
         self.b_y            = np.zeros(n_cols, dtype=np.float64)
         self.b_1            = np.zeros(n_cols, dtype=np.float64)
         self.total_w        = 0.0
         self.weighted_sum_y = 0.0
+        self.weighted_sum_y2 = 0.0     # Σ w y², for the residual (noise) variance
         # Raw (unweighted) possession counts — used only for qualified filter
-        self.n_off          = np.zeros(n_cols // 2, dtype=np.int64)
-        self.n_def          = np.zeros(n_cols // 2, dtype=np.int64)
+        n_players = n_cols // 2 if n_players is None else n_players
+        self.n_off          = np.zeros(n_players, dtype=np.int64)
+        self.n_def          = np.zeros(n_players, dtype=np.int64)
         self.current_date: pd.Timestamp | None = None
+
+    @staticmethod
+    def _offseasons_crossed(a: pd.Timestamp, b: pd.Timestamp) -> int:
+        """Number of July 1sts in (a, b]."""
+        n, year = 0, a.year
+        while True:
+            boundary = pd.Timestamp(year=year, month=7, day=1)
+            if boundary > b:
+                return n
+            if boundary > a:
+                n += 1
+            year += 1
 
     def advance_to(self, new_date: pd.Timestamp) -> None:
         """
-        Scale all accumulated state by γ = 0.5^(Δ/H) for a date advance.
+        Scale all accumulated state by γ = 0.5^(Δ/H) for a date advance,
+        times ``offseason_discount`` for every July 1 the advance crosses.
 
         Call this before ingesting possessions for a new game date so that
         existing state is decayed to the correct recency before new data
@@ -107,12 +131,15 @@ class IncrementalGramState:
         delta = (new_date - self.current_date).days
         if delta <= 0:
             return
-        gamma                = 0.5 ** (delta / self.half_life_days)
+        gamma = 0.5 ** (delta / self.half_life_days)
+        if self.offseason_discount != 1.0:
+            gamma *= self.offseason_discount ** self._offseasons_crossed(self.current_date, new_date)
         self.G              *= gamma
         self.b_y            *= gamma
         self.b_1            *= gamma
         self.total_w        *= gamma
         self.weighted_sum_y *= gamma
+        self.weighted_sum_y2 *= gamma
         self.current_date    = new_date
 
     def ingest(
@@ -161,24 +188,42 @@ class IncrementalGramState:
         self.b_1 += np.asarray(X.T @ w).ravel()
         self.total_w        += float(w.sum())
         self.weighted_sum_y += float((w * y).sum())
+        self.weighted_sum_y2 += float((w * y * y).sum())
 
         self.n_off += n_off_counts
         self.n_def += n_def_counts
 
-    def solve(self) -> tuple[np.ndarray, float]:
+    def centered_rhs(self) -> tuple[np.ndarray, float, float]:
+        """(X'W(y − μ), μ, Σ w (y − μ)²) for the current state."""
+        mu = self.weighted_sum_y / self.total_w if self.total_w > 0 else 0.0
+        return self.b_y - mu * self.b_1, mu, self.weighted_sum_y2 - mu * mu * self.total_w
+
+    def noise_variance(self, beta: np.ndarray) -> float:
+        """Weighted residual variance s² = Σ w (y − μ − Xβ)² / Σ w, from the accumulators."""
+        xty, _, sy2 = self.centered_rhs()
+        rss = sy2 - 2.0 * float(beta @ xty) + float(beta @ (self.G @ beta))
+        return max(rss / self.total_w, 1e-9) if self.total_w > 0 else float("nan")
+
+    def solve(self, penalty: float | np.ndarray | None = None) -> tuple[np.ndarray, float]:
         """
         Solve the current ridge system and return (beta, intercept).
 
-        Minimises  Σ w_i (y_i − μ − X_i β)² + α ‖β‖²
+        Minimises  Σ w_i (y_i − μ − X_i β)² + Σ_j penalty_j β_j²
+
+        ``penalty`` is a scalar or a per-coefficient vector; None uses the
+        state's ``alpha`` for every coefficient. The state is not modified,
+        so several penalties can be solved from the same accumulated data.
 
         Returns
         -------
-        beta      : ndarray (2·P,)
+        beta      : ndarray (n_cols,)
         intercept : float
         """
         mu   = self.weighted_sum_y / self.total_w if self.total_w > 0 else 0.0
         Xty  = self.b_y - mu * self.b_1
-        beta = np.linalg.solve(self.G + self.alpha * np.eye(len(self.G)), Xty)
+        A    = self.G.copy()
+        A.flat[::len(A) + 1] += self.alpha if penalty is None else penalty
+        beta = scipy.linalg.solve(A, Xty, assume_a="pos", overwrite_a=True, check_finite=False)
         return beta, mu
 
 

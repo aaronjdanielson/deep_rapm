@@ -32,6 +32,11 @@ def main() -> None:
     box_dir = args.data_dir / "quality" / "boxscores" if args.reconcile else None
     q = validate_corpus(args.data_dir, args.seasons, box_dir=box_dir)
     args.out.parent.mkdir(parents=True, exist_ok=True)
+    if args.seasons and args.out.exists():
+        # Update only the requested seasons' rows in the existing table.
+        old = pd.read_parquet(args.out)
+        q = pd.concat([old[~old["season"].isin(set(q["season"]))], q], ignore_index=True)
+        q = q.sort_values(["season", "kind", "game_id"]).reset_index(drop=True)
     q.to_parquet(args.out, index=False)
 
     summary = q.groupby(["season", "kind"]).agg(

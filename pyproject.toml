@@ -38,6 +38,7 @@ collect-possessions = "deep_rapm.scripts.collect:main"
 collect-players     = "deep_rapm.scripts.collect_players:main"
 solve-rapm          = "deep_rapm.scripts.solve_rapm:main"
 rolling-rapm        = "deep_rapm.scripts.rolling_rapm:main"
+plot-players        = "deep_rapm.scripts.plot_players:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

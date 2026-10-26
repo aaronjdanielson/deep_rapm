@@ -39,7 +39,7 @@ from deep_rapm.rapm import _build_matrix_from_df, _recency_weights, _competition
 DATA_DIR     = Path("data")
 PLAYER_VOCAB = Path("data/player_vocab.parquet")
 PLAYER_TABLE = Path("data/players.parquet")
-SEASONS      = ["2018-19", "2019-20", "2020-21", "2021-22", "2022-23", "2023-24", "2024-25", "2025-26", "2026-27"]
+SEASONS      = [f"20{y:02d}-{y + 1:02d}" for y in range(13, 27)]   # 2013-14 … 2026-27; seasons without data are skipped
 WARMUP_DAYS  = 180
 
 

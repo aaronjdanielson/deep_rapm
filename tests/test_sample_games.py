@@ -59,6 +59,8 @@ def _build_sample(sample_size: int, seed: int) -> list[tuple[str, str]]:
     if not data_root.exists():
         return cases
     for season_dir in sorted(data_root.iterdir()):
+        if not re.fullmatch(r"\d{4}-\d{2}", season_dir.name):
+            continue  # skip per-game caches (data/games, data/games_v2, ...)
         parquets = sorted(season_dir.glob("possessions_*.parquet"))
         if not parquets:
             continue

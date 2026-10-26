@@ -52,6 +52,7 @@ THRESHOLDS = {
 }
 
 _KINDS = ("regular_season", "playoffs", "preseason")
+NBA_TEAM_IDS = set(range(1610612737, 1610612767))   # the 30 franchises
 
 
 # ---------------------------------------------------------------------------
@@ -131,6 +132,8 @@ def structural_metrics(df: pd.DataFrame) -> pd.DataFrame:
         "dup": dup,
         "overlap": overlap,
         "same_team": (df["offense_team_id"] == df["defense_team_id"]).to_numpy(),
+        "non_nba": (~df["offense_team_id"].isin(NBA_TEAM_IDS)
+                    | ~df["defense_team_id"].isin(NBA_TEAM_IDS)).to_numpy(),
         "bad_points": ((df["points"] < 0) | (df["points"] > 8)).to_numpy(),
         "home_off": is_home_off,
         "points": df["points"].to_numpy(),
@@ -172,6 +175,7 @@ def structural_metrics(df: pd.DataFrame) -> pd.DataFrame:
         "dup_rows": g["dup"].sum(),
         "overlap_rows": g["overlap"].sum(),
         "same_team_rows": g["same_team"].sum(),
+        "non_nba_rows": g["non_nba"].sum(),
         "bad_points_rows": g["bad_points"].sum(),
         "home_share": g["home_off"].mean(),
         "home_points": g["points"].sum() - row.assign(p=away_pts).groupby("game_id", sort=False)["p"].sum(),
@@ -224,12 +228,14 @@ def fetch_box_logs(
     box_dir: Path,
     needed_game_ids: Optional[set[str]] = None,
     sleep_s: float = 2.0,
+    refresh: frozenset[str] = frozenset(),
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Official team and player game logs, cached per (season, kind).
 
-    A cached file is refetched only if it lacks some of *needed_game_ids*
-    (e.g. new games in the current season). Play-in games are fetched with
-    the playoffs. Returns (team_logs, player_logs) with columns
+    A cached file is refetched if it lacks some of *needed_game_ids* or if
+    its season is in *refresh* — the season in progress, whose logs the NBA
+    completes hours after a game ends. Play-in games are fetched with the
+    playoffs. Returns (team_logs, player_logs) with columns
     game_id, team_id, pts  /  game_id, team_id, player_id, minutes.
     """
     from nba_api.stats.endpoints import leaguegamelog
@@ -238,10 +244,10 @@ def fetch_box_logs(
     box_dir.mkdir(parents=True, exist_ok=True)
     teams, players = [], []
     for season, kind in seasons_kinds:
-        types = [_SEASON_TYPES[kind]] + (["PlayIn"] if kind == "playoffs" else [])
+        types = [_SEASON_TYPES[kind]] + (["PlayIn"] if kind == "playoffs" and season >= "2019-20" else [])
         for side in ("T", "P"):
             path = box_dir / f"{season}_{kind}_{side}.parquet"
-            cached = pd.read_parquet(path) if path.exists() else None
+            cached = pd.read_parquet(path) if path.exists() and season not in refresh else None
             if cached is not None and needed_game_ids is not None:
                 want = {g for g in needed_game_ids if g[3:5] == season[2:4]
                         and _kind_of(g) == kind}
@@ -341,6 +347,7 @@ def _verdict(r: pd.Series) -> tuple[list[str], list[str]]:
     if r.overlap_rows: err.append(f"{r.overlap_rows} possessions with a player on both sides")
     if r.players_both_teams: err.append(f"{r.players_both_teams} players listed for both teams")
     if r.same_team_rows: err.append(f"{r.same_team_rows} possessions with offense == defense")
+    if r.non_nba_rows: err.append("exhibition against a non-NBA team")
     if r.bad_points_rows: err.append(f"{r.bad_points_rows} possessions with points outside 0–8")
     if r.n_reg_periods < 4: err.append(f"only {r.n_reg_periods} of 4 regulation periods")
 
@@ -382,7 +389,8 @@ def validate_corpus(
     q = structural_metrics(df)
     if box_dir is not None:
         pairs = sorted(set(zip(q["season"], q["kind"])))
-        team_logs, player_logs = fetch_box_logs(pairs, box_dir, set(q["game_id"]))
+        team_logs, player_logs = fetch_box_logs(pairs, box_dir, set(q["game_id"]),
+                                                refresh=frozenset({max(q["season"])}))
         if len(team_logs) and len(player_logs):
             q = q.merge(reconciliation_metrics(df, team_logs, player_logs),
                         on="game_id", how="left")

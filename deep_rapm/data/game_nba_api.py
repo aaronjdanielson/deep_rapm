@@ -40,6 +40,7 @@ glitch; a free throw is missed iff its description starts with the word
 
 from __future__ import annotations
 
+import collections
 import gzip
 import json
 import re
@@ -157,16 +158,21 @@ def fetch_raw(
     if path.exists():
         with gzip.open(path, "rt") as fh:
             rec = json.load(fh)
-        if rec.get("box") and (rotation_ok(rec) or rotation_retries == 0):
+        if rec.get("actions") and rec.get("box") and (rotation_ok(rec) or rotation_retries == 0):
             return rec
     changed = False
-    if rec is None:
+    if rec is None or not rec.get("actions"):
+        # A game fetched before its play-by-play was published caches an
+        # empty action list; refetch it rather than trust the cache.
         actions = _with_retries(
             lambda: playbyplayv3.PlayByPlayV3(
                 game_id=game_id, start_period=1, end_period=10, timeout=timeout,
             ).get_dict()["game"]["actions"],
             max_retries, base_sleep)
-        rec = {"game_id": game_id, "actions": actions, "box": None, "rotation": None}
+        if rec is None:
+            rec = {"game_id": game_id, "actions": actions, "box": None, "rotation": None}
+        else:
+            rec["actions"] = actions
         changed = True
     if not rec.get("box"):
         try:
@@ -258,17 +264,26 @@ def _period_bounds(period: int) -> tuple[float, float]:
 
 
 def _minutes(s: str) -> float:
-    if not s:
+    """Box-score minutes as a float: "MM:SS", ISO "PT34M12.00S" or a number.
+    Anything else (a few box scores carry junk like "0-22") counts as 0; the
+    value only feeds the minutes-vs-box-score diagnostic."""
+    s = (s or "").strip()
+    try:
+        m = _CLOCK_RE.match(s)
+        if m:
+            return int(m.group(1)) + float(m.group(2)) / 60
+        if ":" in s:
+            mm, ss = s.split(":")[:2]
+            return float(mm) + float(ss) / 60
+        return float(s) if s else 0.0
+    except ValueError:
         return 0.0
-    if ":" in s:
-        m, sec = s.split(":")[:2]
-        return float(m) + float(sec) / 60
-    return float(s)
 
 
-def infer_stints(
+def _infer_once(
     actions: list[dict],
     box: list[list],
+    aliases: dict[tuple[int, str], int],
 ) -> tuple[dict[int, list[tuple[float, float, int]]], dict]:
     """Rotation-style stints {team_id: [(in, out, player_id), ...]} inferred
     from PlayByPlayV3 substitutions and box-score rosters.
@@ -314,9 +329,12 @@ def infer_stints(
             team_of.setdefault(pid, team)
             for key in {_norm_name(a["playerName"]), _norm_name(a.get("playerNameI") or "")}:
                 _add(team, key, pid)
+    for (team, key), pid in aliases.items():   # historical names learned by infer_stints
+        _add(team, key, pid)
     box_starters = {t: [int(r[1]) for r in box if int(r[0]) == t and r[5]] for t in teams}
 
-    info = {"uncertain_periods": 0, "unresolved_subs": 0, "inconsistencies": 0}
+    info: dict = {"uncertain_periods": 0, "unresolved_subs": 0, "inconsistencies": 0,
+                  "unresolved_names": [], "unresolved_events": [], "uncertain": []}
     stints: dict[int, list[tuple[float, float, int]]] = {t: [] for t in teams}
 
     def _resolve(team: int, name: str, exclude: set[int]) -> Optional[int]:
@@ -344,16 +362,34 @@ def infer_stints(
         return (atype in ("Ejection", "Timeout", "Instant Replay", "period")
                 or "Technical" in sub or "Technical" in atype)
 
+    def _lookahead(team: int, name: str, exclude: set[int], start: int) -> Optional[int]:
+        """Several off-court players share this name ("SUB: Johnson FOR …" on
+        a team with two Johnsons): the one who entered is the first of them
+        referenced by personId later in the period."""
+        key = _strip_suffix(_norm_name(name))
+        cands = (by_stripped.get((team, key), set()) or by_first.get((team, key), set())) - exclude
+        if len(cands) < 2:
+            return None
+        period = int(actions[start].get("period", 1))
+        for a in actions[start + 1:]:
+            if int(a.get("period", 1)) != period:
+                return None
+            pid = int(a.get("personId") or 0)
+            if pid in cands:
+                return pid
+        return None
+
     periods = sorted({int(a.get("period", 1)) for a in actions})
     prev_end: dict[int, set[int]] = {t: set() for t in teams}
     for period in periods:
-        acts = [a for a in actions if int(a.get("period", 1)) == period]
+        idx_acts = [(i, a) for i, a in enumerate(actions) if int(a.get("period", 1)) == period]
+        acts = [a for _, a in idx_acts]
         p_start, p_end = _period_bounds(period)
 
         # 1. Who started the period?
         starters: dict[int, list[int]] = {t: [] for t in teams}
         subbed_in: dict[int, set[int]] = {t: set() for t in teams}
-        for a in acts:
+        for i, a in idx_acts:
             pid = int(a.get("personId") or 0)
             if a.get("actionType") == "Substitution":
                 team = int(a.get("teamId") or 0)
@@ -364,9 +400,14 @@ def infer_stints(
                 m = _SUB_RE.match(a.get("description", "") or "")
                 if m:
                     inn = _resolve(team, m.group(1), set())
-                    subbed_in[team] |= ({inn} if inn else by_stripped.get(
-                        (team, _strip_suffix(_norm_name(m.group(1)))), set())
-                        or by_first.get((team, _norm_name(m.group(1))), set()))
+                    fallback = (by_stripped.get((team, _strip_suffix(_norm_name(m.group(1)))), set())
+                                or by_first.get((team, _norm_name(m.group(1))), set()))
+                    if inn is None and not fallback:
+                        # A name nobody on the roster carries (a player renamed
+                        # since): record it even if this period's lineup ends up
+                        # unknown, so _learn_aliases can resolve it.
+                        info["unresolved_events"].append((team, m.group(1), i, frozenset()))
+                    subbed_in[team] |= {inn} if inn else fallback
             elif pid in team_of and not _skip_for_starters(a):
                 team = team_of[pid]
                 if pid not in subbed_in[team] and pid not in starters[team]:
@@ -377,6 +418,10 @@ def infer_stints(
             s = starters[t]
             if period == 1 and len(box_starters[t]) == 5:
                 s = box_starters[t]
+            elif len(s) > 5 and len(set(s) & prev_end[t]) == 5:
+                # A bench player referenced before his (unparsed) sub-in looks
+                # like a sixth starter; the five who closed the last period win.
+                s = [p for p in s if p in prev_end[t]]
             elif len(s) < 5:
                 cands = prev_end[t] - set(s) - subbed_in[t]
                 if len(s) + len(cands) == 5:
@@ -386,9 +431,10 @@ def infer_stints(
             else:
                 lineup[t] = None
                 info["uncertain_periods"] += 1
+                info["uncertain"].append((period, t, len(s), len(prev_end[t] - set(s) - subbed_in[t])))
 
         # 2. Replay the substitutions.
-        for a in acts:
+        for i, a in idx_acts:
             if a.get("actionType") != "Substitution":
                 continue
             team = int(a.get("teamId") or 0)
@@ -399,12 +445,17 @@ def infer_stints(
             out = int(a.get("personId") or 0)
             m = _SUB_RE.match(a.get("description", "") or "")
             inn = _resolve(team, m.group(1), set(on)) if m else None
+            if inn is None and m:
+                inn = _lookahead(team, m.group(1), set(on), i)
             if out in on:
                 stints[team].append((on.pop(out), t, out))
             else:
                 info["inconsistencies"] += 1
             if inn is None:
                 info["unresolved_subs"] += 1
+                name = m.group(1) if m else a.get("description", "")
+                info["unresolved_names"].append((team, name))
+                info["unresolved_events"].append((team, name, i, frozenset(on)))
             elif inn in on:
                 info["inconsistencies"] += 1
             else:
@@ -426,6 +477,79 @@ def infer_stints(
     errs = [abs(played.get(int(r[1]), 0.0) - _minutes(r[6])) for r in box]
     info["minutes_max_err"] = max(errs) if errs else None
     info["minutes_mae"] = sum(errs) / len(errs) if errs else None
+    info["played"] = played
+    return stints, info
+
+
+def _learn_aliases(actions: list[dict], box: list[list], info: dict) -> dict[tuple[int, str], int]:
+    """Historical names for players the box score lists under a later legal
+    name (descriptions say "Kanter", the roster says "Freedom"). Such a
+    player's current name appears in no substitution text of the game, while
+    every other substituted player's does. For a substitute name that
+    resolved to nobody, the candidates are teammates who played, were not on
+    court at that moment and are never named in a substitution; with several,
+    the first one referenced by a non-substitution action later in the period
+    is taken. A player gets at most one alias."""
+    box_min = {int(r[1]): _minutes(r[6]) for r in box}
+    team_of = {int(r[1]): int(r[0]) for r in box}
+    family = {int(r[1]): _strip_suffix(_norm_name(r[3])) for r in box}
+    first = {int(r[1]): _norm_name(r[2]) for r in box}
+
+    sub_names: set[str] = set()
+    for a in actions:
+        if a.get("actionType") == "Substitution":
+            m = _SUB_RE.match(a.get("description", "") or "")
+            if m:
+                for g in (m.group(1), m.group(2)):
+                    k = _strip_suffix(_norm_name(g))
+                    sub_names.add(k)
+                    sub_names.update(k.split())
+
+    def _named_in_subs(pid: int) -> bool:
+        fam = family[pid]
+        return (fam in sub_names or (fam and fam.split()[-1] in sub_names)
+                or first[pid] in sub_names)
+
+    aliases: dict[tuple[int, str], int] = {}
+    for team, name, i, on in info["unresolved_events"]:
+        key = _strip_suffix(_norm_name(name))
+        if not key or (team, key) in aliases:
+            continue
+        cands = {p for p, t in team_of.items()
+                 if t == team and box_min[p] > 0 and p not in on
+                 and family[p] != key and not _named_in_subs(p)}
+        if len(cands) > 1:
+            period = int(actions[i].get("period", 1))
+            pick = None
+            for a in actions[i + 1:]:
+                if int(a.get("period", 1)) != period:
+                    break
+                pid = int(a.get("personId") or 0)
+                if pid in cands and a.get("actionType") != "Substitution":
+                    pick = pid
+                    break
+            cands = {pick} if pick else set()
+        if len(cands) == 1:
+            aliases[(team, key)] = next(iter(cands))
+    targets = collections.Counter(aliases.values())
+    return {k: pid for k, pid in aliases.items() if targets[pid] == 1}
+
+
+def infer_stints(
+    actions: list[dict],
+    box: list[list],
+) -> tuple[dict[int, list[tuple[float, float, int]]], dict]:
+    """Rotation-style stints inferred from play-by-play substitutions and the
+    box-score roster (see ``_infer_once``), in two passes: the first pass's
+    unresolved substitute names are matched to under-tracked players by
+    elimination (``_learn_aliases``) and the inference is rerun with those
+    aliases. ``info["aliases"]`` lists what was learned."""
+    stints, info = _infer_once(actions, box, {})
+    aliases = _learn_aliases(actions, box, info)
+    if aliases:
+        stints, info = _infer_once(actions, box, aliases)
+    info["aliases"] = {f"{team}:{key}": pid for (team, key), pid in aliases.items()}
+    info.pop("played", None)
     return stints, info
 
 
