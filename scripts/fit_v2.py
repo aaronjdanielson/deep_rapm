@@ -27,6 +27,8 @@ def main() -> None:
     p.add_argument("--objective", default="forward", choices=["forward", "evidence"])
     p.add_argument("--shrink", type=float, default=0.0, metavar="MINUTES",
                    help="shrink prior-feature rates toward league averages by this many minutes (v2.1: 500)")
+    p.add_argument("--features", default="v1", choices=["v1", "v2"],
+                   help="prior features: v1 (phase 1) or v2 (+ usage, assist, rebound, steal, block, turnover shares)")
     p.add_argument("--no-learn-mean", action="store_true", help="ablation: prior mean fixed at 0")
     p.add_argument("--no-learn-precision", action="store_true", help="ablation: prior precision fixed at the base penalty")
     p.add_argument("--no-learn-alpha", action="store_true", help="ablation: base penalties fixed")
@@ -34,6 +36,12 @@ def main() -> None:
                    help="s² in the evidence objective: current model's residuals, or the base ridge's (fixed)")
     p.add_argument("--score-only", type=Path, default=None, metavar="MODEL_PT",
                    help="re-run the evaluation pass of a saved model instead of fitting")
+    p.add_argument("--until", default=None, metavar="YYYY-MM-DD",
+                   help="ignore games after this date (fit or score on a fixed data snapshot)")
+    p.add_argument("--score-out", type=Path, default=None,
+                   help="with --score-only: directory for the cache and summary (default: next to the model)")
+    p.add_argument("--forward-dir", type=Path, default=Path("outputs/forward"),
+                   help="with --score-only: where the forward-score parquets go")
     p.add_argument("--epochs", type=int, default=12)
     p.add_argument("--patience", type=int, default=3)
     p.add_argument("--batch-origins", type=int, default=8)
@@ -50,8 +58,9 @@ def main() -> None:
     args = p.parse_args()
 
     if args.score_only:
-        score_saved(args.score_only, forward_dir=Path("outputs/forward"),
-                    name=None if args.name == "v2" else args.name)
+        score_saved(args.score_only, forward_dir=args.forward_dir,
+                    name=None if args.name == "v2" else args.name, until=args.until,
+                    out_dir=args.score_out)
         return
 
     spec = FitSpec(name=args.name, base=args.base, objective=args.objective, epochs=args.epochs,
@@ -60,17 +69,18 @@ def main() -> None:
                    horizon_days=args.horizon, train_until=args.train_until, val_until=args.val_until,
                    shrink_minutes=args.shrink, learn_mean=not args.no_learn_mean,
                    learn_precision=not args.no_learn_precision, learn_alpha=not args.no_learn_alpha,
-                   evidence_noise=args.evidence_noise,
+                   evidence_noise=args.evidence_noise, feature_set=args.features,
                    seasons=tuple(args.seasons) if args.seasons else None)
     if args.quick:
         spec = FitSpec(name=args.name + "_quick", base=args.base, objective=args.objective, epochs=2,
                        origin_step_days=28, horizon_days=28, shrink_minutes=args.shrink,
                        learn_mean=not args.no_learn_mean, learn_precision=not args.no_learn_precision,
                        learn_alpha=not args.no_learn_alpha, evidence_noise=args.evidence_noise,
+                       feature_set=args.features,
                        seasons=("2013-14", "2014-15", "2015-16", "2016-17"),
                        train_until="2016-07-01", val_until="2017-01-01")
         args.out = Path("outputs/v2_quick")
-    fit_v2(spec, VARIANTS[args.base], out_dir=args.out,
+    fit_v2(spec, VARIANTS[args.base], out_dir=args.out, until=args.until,
            forward_dir=Path("outputs/forward") if not args.quick else Path("outputs/v2_quick/forward"))
 
 

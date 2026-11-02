@@ -54,7 +54,7 @@ import torch.nn as nn
 
 from .forward import (KINDS_MAIN, GameDate, WindowScorer, build_game_dates, default_first_origin,
                       eval_weights, load_possessions, posterior_inverse, predictive_terms)
-from .priors import FEATURES, build_prior_features, load_game_logs, static_features
+from .priors import FEATURE_SETS, build_prior_features, load_game_logs, static_features
 from .production import RapmConfig
 from .rolling import IncrementalGramState
 
@@ -80,6 +80,7 @@ class FitSpec:
     max_prior_mean: float = 0.05     # |m| ≤ 5 points per 100
     lag_days: int = 365
     shrink_minutes: float = 0.0      # prior features: minutes of league-average play added before rates (0 = raw, as v2)
+    feature_set: str = "v1"          # prior features: "v1" (phase 1) or "v2" (+ on-court share statistics)
     learn_mean: bool = True          # ablations: prior mean from features (else 0)
     learn_precision: bool = True     #            prior precision from features (else the base penalty)
     learn_alpha: bool = True         #            base penalties log λ_off / log λ_def trained (else fixed)
@@ -215,12 +216,13 @@ class Context:
 
 def prepare(spec: FitSpec, base_cfg: RapmConfig, data_dir: Path = Path("data"),
             vocab_path: Path = Path("data/player_vocab.parquet"),
-            player_table_path: Path = Path("data/players.parquet"), verbose: bool = True) -> Context:
+            player_table_path: Path = Path("data/players.parquet"), verbose: bool = True,
+            until: pd.Timestamp | str | None = None) -> Context:
     cfg = base_cfg.with_(name=spec.name, home_court=True,
                          **({"seasons": tuple(spec.seasons)} if spec.seasons else {}))
     vocab = pd.read_parquet(vocab_path)
     n_players = len(vocab) + 1
-    poss = load_possessions(cfg, data_dir)
+    poss = load_possessions(cfg, data_dir, until=until)
     first_origin = default_first_origin(data_dir, cfg.seasons)
     last_date = poss["game_date"].max()
     comp_sigma = cfg.calibrate_sigma(np.abs(poss.loc[poss["game_date"] < first_origin, "score_diff"].values))
@@ -236,7 +238,8 @@ def prepare(spec: FitSpec, base_cfg: RapmConfig, data_dir: Path = Path("data"),
               f"{len(origins)} origins {origins[0].date()} → {origins[-1].date()}; σ = {comp_sigma:.2f}; "
               f"train < {spec.train_until}, val < {spec.val_until}", flush=True)
     feats = build_prior_features(origins, vocab, load_game_logs(), static_features(vocab),
-                                 shrink_minutes=spec.shrink_minutes, verbose=verbose)
+                                 shrink_minutes=spec.shrink_minutes, feature_set=spec.feature_set,
+                                 verbose=verbose)
     ctx = Context(spec, base_cfg, cfg, vocab, n_players, dates, origins, comp_sigma, feats,
                   np.zeros(1), np.ones(1),
                   pd.read_parquet(player_table_path).sort_values("season")
@@ -248,7 +251,8 @@ def prepare(spec: FitSpec, base_cfg: RapmConfig, data_dir: Path = Path("data"),
 
 
 def new_model(ctx: Context) -> V2Model:
-    return V2Model(len(FEATURES) + len(LAG_FEATURES), ctx.spec.hidden, ctx.spec.max_prior_mean,
+    return V2Model(len(FEATURE_SETS[ctx.spec.feature_set]) + len(LAG_FEATURES), ctx.spec.hidden,
+                   ctx.spec.max_prior_mean,
                    ctx.cfg.alpha, ctx.cfg.alpha_def_eff, ctx.feat_mean, ctx.feat_std,
                    learn_mean=ctx.spec.learn_mean, learn_precision=ctx.spec.learn_precision)
 
@@ -388,7 +392,8 @@ def train(ctx: Context, model: V2Model, out_dir: Path, verbose: bool = True) -> 
             best_val, best_epoch = wmse["val"], epoch
             best_state = {k: v.clone() for k, v in model.state_dict().items()}
             torch.save({"state_dict": best_state, "spec": asdict(spec), "base": asdict(ctx.base_cfg),
-                        "features": FEATURES + LAG_FEATURES, "epoch": epoch}, out_dir / "model.pt")
+                        "features": FEATURE_SETS[spec.feature_set] + LAG_FEATURES, "epoch": epoch},
+                       out_dir / "model.pt")
         elif epoch - best_epoch >= spec.patience:
             if verbose:
                 print(f"  no validation improvement for {spec.patience} epochs — stopping", flush=True)
@@ -421,12 +426,12 @@ def evaluate(ctx: Context, model: V2Model, out_dir: Path, forward_dir: Path, ver
 
 def fit_v2(spec: FitSpec, base_cfg: RapmConfig, data_dir: Path = Path("data"),
            out_dir: Path = Path("outputs/v2"), forward_dir: Path = Path("outputs/forward"),
-           verbose: bool = True) -> dict:
+           verbose: bool = True, until: pd.Timestamp | str | None = None) -> dict:
     torch.manual_seed(spec.seed)
     np.random.seed(spec.seed)
     t0 = time.time()
     out_dir.mkdir(parents=True, exist_ok=True)
-    ctx = prepare(spec, base_cfg, data_dir, verbose=verbose)
+    ctx = prepare(spec, base_cfg, data_dir, verbose=verbose, until=until)
     model = new_model(ctx)
     best_epoch, log = train(ctx, model, out_dir, verbose)
     summary = evaluate(ctx, model, out_dir, forward_dir, verbose)
@@ -436,17 +441,20 @@ def fit_v2(spec: FitSpec, base_cfg: RapmConfig, data_dir: Path = Path("data"),
 
 
 def score_saved(model_path: Path, data_dir: Path = Path("data"), forward_dir: Path = Path("outputs/forward"),
-                name: str | None = None, verbose: bool = True) -> dict:
-    """Re-run the evaluation pass of a saved model (e.g. to add the predictive density)."""
+                name: str | None = None, verbose: bool = True, until: pd.Timestamp | str | None = None,
+                out_dir: Path | None = None) -> dict:
+    """Re-run the evaluation pass of a saved model (e.g. to add the predictive
+    density, or to check that a frozen model reproduces on its data snapshot)."""
     ckpt = torch.load(model_path, weights_only=False)
     spec = FitSpec(**ckpt["spec"])
     if name:
         spec.name = name
     base_cfg = RapmConfig(**ckpt["base"])
-    ctx = prepare(spec, base_cfg, data_dir, verbose=verbose)
+    ctx = prepare(spec, base_cfg, data_dir, verbose=verbose, until=until)
     model = new_model(ctx)
     model.load_state_dict(ckpt["state_dict"])
-    out_dir = Path(model_path).parent
+    out_dir = Path(out_dir) if out_dir else Path(model_path).parent
+    out_dir.mkdir(parents=True, exist_ok=True)
     summary = evaluate(ctx, model, out_dir, forward_dir, verbose)
     summary["best_epoch"] = ckpt.get("epoch")
     (out_dir / "fit_summary_rescored.json").write_text(json.dumps(summary, indent=2, default=str))

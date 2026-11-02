@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -215,35 +216,51 @@ def test_fetch_season_rosters_all_positions_valid():
     assert len(bad) == 0, f"Invalid position_idx values:\n{bad}"
 
 
+def _parquet_player_seasons(kinds=("regular_season", "playoffs")) -> set[tuple[int, str]]:
+    """(player_id, season) for every player in the season parquets of these kinds.
+
+    Preseason is excluded: camp players without an NBA contract are mapped to
+    UNKNOWN by design (see CLAUDE.md §2.7).
+    """
+    pairs: set[tuple[int, str]] = set()
+    for pq in sorted(Path("data").glob("20*/possessions_*.parquet")):
+        if not any(pq.stem.endswith(k) for k in kinds):
+            continue
+        df = pd.read_parquet(pq, columns=["offense_player_ids", "defense_player_ids"])
+        ids = np.concatenate([np.concatenate(df[c].values) for c in df.columns]).astype(int)
+        pairs |= {(int(p), pq.parent.name) for p in np.unique(ids)}
+    return pairs
+
+
+@pytest.mark.skipif(not Path("data/players.parquet").exists(), reason="no player table")
+def test_player_table_covers_all_parquet_players():
+    """Every regular-season / playoff player-season has an entry in data/players.parquet."""
+    table = pd.read_parquet("data/players.parquet")
+    lookup = set(zip(table["player_id"].astype(int), table["season"]))
+    missing = sorted(_parquet_player_seasons() - lookup)
+    assert not missing, (
+        f"{len(missing)} player-season pairs in parquets have no player-table entry.\n"
+        f"Examples: {missing[:10]}"
+    )
+
+
+@pytest.mark.skipif(not Path("data/player_vocab.parquet").exists(), reason="no vocab")
+def test_vocab_covers_all_parquet_players():
+    """Every regular-season / playoff player has a vocab index (none fall into UNKNOWN)."""
+    vocab = set(pd.read_parquet("data/player_vocab.parquet")["player_id"].astype(int))
+    missing = sorted({p for p, _ in _parquet_player_seasons()} - vocab)
+    assert not missing, f"{len(missing)} players have no vocab index: {missing[:10]}"
+
+
 @pytest.mark.network
-def test_player_table_covers_all_parquet_players(tmp_path):
-    """Every player_id in the season parquets has a position entry."""
+def test_build_player_table_from_rosters(tmp_path):
+    """build_player_table fetches rosters and returns one row per (player, season)."""
     from deep_rapm.data.players import build_player_table
 
-    seasons = ["2018-19", "2019-20", "2020-21", "2021-22", "2022-23", "2023-24"]
     table = build_player_table(
-        seasons=seasons,
+        seasons=["2023-24"],
         output_path=tmp_path / "players.parquet",
         roster_cache_dir=tmp_path / "rosters",
     )
-    lookup = set(zip(table["player_id"], table["season"]))
-
-    data_root = Path("data")
-    missing: list[tuple[int, str]] = []
-    for season_dir in sorted(data_root.iterdir()):
-        parquets = sorted(season_dir.glob("possessions_*.parquet"))
-        if not parquets:
-            continue
-        season = season_dir.name
-        df = pd.read_parquet(parquets[0])
-        for col in ("offense_player_ids", "defense_player_ids"):
-            for ids in df[col]:
-                for pid in ids:
-                    if (int(pid), season) not in lookup:
-                        missing.append((int(pid), season))
-
-    missing = list(set(missing))
-    assert len(missing) == 0, (
-        f"{len(missing)} player-season pairs in parquets have no position entry.\n"
-        f"Examples: {missing[:10]}"
-    )
+    assert len(table) > 400
+    assert not table.duplicated(["player_id", "season"]).any()

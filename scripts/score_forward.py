@@ -57,6 +57,8 @@ def main() -> None:
     p.add_argument("--data-dir", type=Path, default=Path("data"))
     p.add_argument("--out", type=Path, default=Path("outputs/forward"))
     p.add_argument("--no-nll", action="store_true", help="skip the predictive density (one inverse per origin)")
+    p.add_argument("--until", default=None, metavar="YYYY-MM-DD",
+                   help="ignore games after this date (score on the same data snapshot as other models)")
     p.add_argument("--summarize", action="store_true")
     p.add_argument("--selection", action="store_true",
                    help="with --summarize: train / val tables only (choose models here; holdout stays hidden)")
@@ -82,7 +84,7 @@ def main() -> None:
         t0 = time.time()
         res = score_forward(cfg, data_dir=args.data_dir, origin_step_days=args.origin_step,
                             horizon_days=args.horizon, penalties=penalties,
-                            first_origin=args.first_origin, nll=not args.no_nll)
+                            first_origin=args.first_origin, nll=not args.no_nll, until=args.until)
         res.poss.to_parquet(args.out / f"{name}_poss.parquet", index=False)
         res.margins.to_parquet(args.out / f"{name}_margins.parquet", index=False)
         res.origins.to_parquet(args.out / f"{name}_origins.parquet", index=False)

@@ -45,74 +45,74 @@ pip install "deep-rapm[viz]"
 ## Current leaderboard
 
 <!-- leaderboard:start -->
-The most recent weekly fit, using every regular-season, playoff and preseason possession through **October 24, 2026**. Values are points per 100 possessions relative to an average player; positive DRAPM is good defense. Ranked: players who have appeared in a game in the past year.
+The most recent weekly fit, using every regular-season, playoff and preseason possession through **October 25, 2026**. Values are points per 100 possessions relative to an average player; positive DRAPM is good defense. Listed: players who have appeared in a game in the past year, ordered by the estimate. Each estimate has a 90% interval from the model's posterior (Gaussian noise, recency and competition weights read as precisions, fixed ridge penalty). The intervals are conditional on that model and have not been checked against outcomes; among the leaders they overlap heavily, so these tables separate tiers of players — the order within a tier is not established.
 
-### Top 25 overall
+### Highest RAPM
 
-| # | Player | RAPM | ORAPM | DRAPM |
-|--:|---|--:|--:|--:|
-| 1 | Victor Wembanyama | **+6.5** | +1.5 | +5.1 |
-| 2 | Shai Gilgeous-Alexander | **+6.3** | +3.6 | +2.7 |
-| 3 | Chet Holmgren | **+6.3** | +3.1 | +3.2 |
-| 4 | Nikola Jokić | **+5.9** | +4.7 | +1.2 |
-| 5 | Alex Caruso | **+5.2** | +0.5 | +4.6 |
-| 6 | Ajay Mitchell | **+4.8** | +1.9 | +2.9 |
-| 7 | Kawhi Leonard | **+4.3** | +3.7 | +0.7 |
-| 8 | Giannis Antetokounmpo | **+4.3** | +3.2 | +1.2 |
-| 9 | Stephen Curry | **+4.1** | +4.7 | −0.6 |
-| 10 | Julian Champagnie | **+3.9** | +3.0 | +0.9 |
-| 11 | Aaron Gordon | **+3.9** | +1.7 | +2.2 |
-| 12 | Ausar Thompson | **+3.8** | +1.2 | +2.5 |
-| 13 | Dylan Harper | **+3.8** | +1.6 | +2.1 |
-| 14 | Zach Edey | **+3.7** | +1.4 | +2.3 |
-| 15 | Joel Embiid | **+3.5** | +1.5 | +2.0 |
-| 16 | Jimmy Butler III | **+3.5** | +1.8 | +1.7 |
-| 17 | Luka Dončić | **+3.5** | +3.6 | −0.2 |
-| 18 | Donovan Mitchell | **+3.5** | +2.2 | +1.3 |
-| 19 | Jarrett Allen | **+3.4** | +2.1 | +1.3 |
-| 20 | Payton Pritchard | **+3.4** | +2.6 | +0.8 |
-| 21 | Pascal Siakam | **+3.3** | +1.6 | +1.7 |
-| 22 | Karl-Anthony Towns | **+3.3** | +2.5 | +0.8 |
-| 23 | LaMelo Ball | **+3.2** | +4.0 | −0.8 |
-| 24 | Marcus Smart | **+3.2** | +0.8 | +2.4 |
-| 25 | Amen Thompson | **+3.2** | +1.2 | +2.0 |
+| Player | RAPM | 90% interval | ORAPM | DRAPM |
+|---|--:|--:|--:|--:|
+| Shai Gilgeous-Alexander | **+6.9** | +2.7 to +11.1 | +3.9 | +3.0 |
+| Victor Wembanyama | **+6.8** | +2.4 to +11.2 | +1.6 | +5.3 |
+| Nikola Jokić | **+6.5** | +2.2 to +10.8 | +5.0 | +1.5 |
+| Chet Holmgren | **+6.2** | +1.9 to +10.5 | +2.8 | +3.4 |
+| Alex Caruso | **+5.9** | +1.6 to +10.2 | +0.9 | +5.0 |
+| Kawhi Leonard | **+4.7** | +0.4 to +8.9 | +3.9 | +0.8 |
+| Giannis Antetokounmpo | **+4.6** | +0.3 to +8.9 | +3.3 | +1.3 |
+| Ajay Mitchell | **+4.5** | −0.3 to +9.2 | +1.7 | +2.7 |
+| Stephen Curry | **+4.4** | +0.1 to +8.7 | +4.9 | −0.5 |
+| Aaron Gordon | **+4.2** | −0.2 to +8.6 | +1.8 | +2.4 |
+| Jarrett Allen | **+4.1** | −0.1 to +8.3 | +2.5 | +1.6 |
+| Payton Pritchard | **+4.1** | −0.2 to +8.3 | +2.9 | +1.2 |
+| Dylan Harper | **+4.0** | −0.8 to +8.7 | +1.7 | +2.3 |
+| Donovan Mitchell | **+3.9** | −0.2 to +8.0 | +2.4 | +1.5 |
+| Julian Champagnie | **+3.9** | −0.4 to +8.1 | +3.0 | +0.9 |
+| Jimmy Butler III | **+3.8** | −0.4 to +8.1 | +2.0 | +1.8 |
+| Joel Embiid | **+3.8** | −0.7 to +8.4 | +1.7 | +2.1 |
+| Zach Edey | **+3.8** | −1.4 to +9.0 | +1.4 | +2.4 |
+| Luka Dončić | **+3.8** | −0.2 to +7.7 | +4.0 | −0.2 |
+| Jayson Tatum | **+3.7** | −0.6 to +8.0 | +1.9 | +1.8 |
+| Jrue Holiday | **+3.7** | −0.4 to +7.7 | +1.2 | +2.4 |
+| Rudy Gobert | **+3.6** | −0.5 to +7.8 | −0.6 | +4.3 |
+| Pascal Siakam | **+3.6** | −0.4 to +7.6 | +1.8 | +1.8 |
+| Derrick White | **+3.6** | −0.6 to +7.8 | +1.8 | +1.8 |
+| Austin Reaves | **+3.6** | −0.6 to +7.8 | +2.6 | +1.0 |
 
 <table>
 <tr>
 <td valign="top" width="50%">
 
-### Top 10 offense
+### Highest offense
 
-| # | Player | ORAPM | RAPM |
-|--:|---|--:|--:|
-| 1 | Stephen Curry | **+4.7** | +4.1 |
-| 2 | Nikola Jokić | **+4.7** | +5.9 |
-| 3 | LaMelo Ball | **+4.0** | +3.2 |
-| 4 | Kawhi Leonard | **+3.7** | +4.3 |
-| 5 | Luka Dončić | **+3.6** | +3.5 |
-| 6 | Shai Gilgeous-Alexander | **+3.6** | +6.3 |
-| 7 | Jamal Murray | **+3.4** | +2.0 |
-| 8 | Giannis Antetokounmpo | **+3.2** | +4.3 |
-| 9 | Chet Holmgren | **+3.1** | +6.3 |
-| 10 | Julian Champagnie | **+3.0** | +3.9 |
+| Player | ORAPM | 90% interval | RAPM |
+|---|--:|--:|--:|
+| Nikola Jokić | **+5.0** | +1.9 to +8.0 | +6.5 |
+| Stephen Curry | **+4.9** | +1.8 to +7.9 | +4.4 |
+| LaMelo Ball | **+4.2** | +1.0 to +7.3 | +3.5 |
+| Luka Dončić | **+4.0** | +1.2 to +6.8 | +3.8 |
+| Shai Gilgeous-Alexander | **+3.9** | +1.0 to +6.9 | +6.9 |
+| Kawhi Leonard | **+3.9** | +0.9 to +6.9 | +4.7 |
+| Jamal Murray | **+3.5** | +0.5 to +6.5 | +2.2 |
+| Giannis Antetokounmpo | **+3.3** | +0.3 to +6.4 | +4.6 |
+| Devin Booker | **+3.1** | +0.3 to +5.9 | +2.7 |
+| Kevin Durant | **+3.1** | +0.3 to +5.9 | +2.9 |
 
 </td>
 <td valign="top" width="50%">
 
-### Top 10 defense
+### Highest defense
 
-| # | Player | DRAPM | RAPM |
-|--:|---|--:|--:|
-| 1 | Victor Wembanyama | **+5.1** | +6.5 |
-| 2 | Alex Caruso | **+4.6** | +5.2 |
-| 3 | Rudy Gobert | **+4.0** | +3.1 |
-| 4 | Chet Holmgren | **+3.2** | +6.3 |
-| 5 | Jalen Suggs | **+2.9** | +2.3 |
-| 6 | Ajay Mitchell | **+2.9** | +4.8 |
-| 7 | Daniss Jenkins | **+2.9** | +3.1 |
-| 8 | Shai Gilgeous-Alexander | **+2.7** | +6.3 |
-| 9 | Ausar Thompson | **+2.5** | +3.8 |
-| 10 | Landry Shamet | **+2.5** | +1.9 |
+| Player | DRAPM | 90% interval | RAPM |
+|---|--:|--:|--:|
+| Victor Wembanyama | **+5.3** | +2.1 to +8.4 | +6.8 |
+| Alex Caruso | **+5.0** | +2.0 to +8.0 | +5.9 |
+| Rudy Gobert | **+4.3** | +1.3 to +7.2 | +3.6 |
+| Chet Holmgren | **+3.4** | +0.3 to +6.4 | +6.2 |
+| Daniss Jenkins | **+3.1** | −0.4 to +6.5 | +3.5 |
+| Jalen Suggs | **+3.0** | −0.1 to +6.2 | +2.2 |
+| Shai Gilgeous-Alexander | **+3.0** | +0.0 to +6.0 | +6.9 |
+| Ajay Mitchell | **+2.7** | −0.6 to +6.1 | +4.5 |
+| Landry Shamet | **+2.6** | −0.5 to +5.8 | +2.1 |
+| Marcus Smart | **+2.5** | −0.5 to +5.5 | +3.3 |
 
 </td>
 </tr>

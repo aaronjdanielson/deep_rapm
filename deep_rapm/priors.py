@@ -31,6 +31,47 @@ FEATURES = [
     "pos_g", "pos_f", "pos_c", "height_in", "weight_lb", "size_missing",
 ]
 
+# On-court share statistics: the fraction of the team's (or opponent's) work a
+# player does while on the floor, from team and opponent game totals scaled by
+# his share of the game's minutes (the Basketball-Reference estimates).
+#   usg  plays (FGA + 0.44·FTA + TOV) / team plays while on court
+#   ast  assists / teammate field goals while on court
+#   tov  turnovers / own plays
+#   oreb, dreb  rebounds / available rebounds while on court
+#   stl  steals / opponent possessions while on court
+#   blk  blocks / opponent two-point attempts while on court
+SHARE_STATS = {   # name: (numerator column, denominator column)
+    "usg": ("n_usg", "d_usg"), "ast": ("AST", "d_ast"), "tov": ("TOV", "n_usg"),
+    "oreb": ("OREB", "d_oreb"), "dreb": ("DREB", "d_dreb"),
+    "stl": ("STL", "d_stl"), "blk": ("BLK", "d_blk"),
+}
+SHARE_COLS = sorted({c for pair in SHARE_STATS.values() for c in pair} - set(LOG_COLS))
+RATE_FEATURES = [f"{k}_pct" for k in SHARE_STATS] + ["usg_pct_365"]
+FEATURE_SETS = {"v1": FEATURES, "v2": FEATURES + RATE_FEATURES}
+
+
+def _share_denominators(logs: pd.DataFrame) -> pd.DataFrame:
+    """Per player-game numerators/denominators of the on-court share statistics."""
+    logs["n_usg"] = logs["FGA"] + 0.44 * logs["FTA"] + logs["TOV"]
+    team = logs.groupby(["GAME_ID", "TEAM_ID"])[
+        ["MIN", "FGA", "FTA", "TOV", "FGM", "FG3A", "OREB", "DREB", "n_usg"]].sum().reset_index()
+    opp = team.merge(team, on="GAME_ID", suffixes=("", "_opp"))
+    opp = opp[opp["TEAM_ID"] != opp["TEAM_ID_opp"]].drop(columns="TEAM_ID_opp")
+    logs = logs.merge(opp, on=["GAME_ID", "TEAM_ID"], how="left", suffixes=("", "_tm"))
+    share = np.where(logs["MIN_tm"] > 0, logs["MIN"] / (logs["MIN_tm"] / 5.0), 0.0)
+    share = np.nan_to_num(share)
+    opp_poss = logs["FGA_opp"] + 0.44 * logs["FTA_opp"] - logs["OREB_opp"] + logs["TOV_opp"]
+    logs["d_usg"] = share * logs["n_usg_tm"]
+    logs["d_ast"] = np.maximum(share * logs["FGM_tm"] - logs["FGM"], 0.0)
+    logs["d_oreb"] = share * (logs["OREB_tm"] + logs["DREB_opp"])
+    logs["d_dreb"] = share * (logs["DREB_tm"] + logs["OREB_opp"])
+    logs["d_stl"] = share * opp_poss
+    logs["d_blk"] = share * (logs["FGA_opp"] - logs["FG3A_opp"])
+    for c in SHARE_COLS:
+        logs[c] = np.nan_to_num(logs[c].astype(np.float64))
+    drop = [c for c in logs.columns if c.endswith("_tm") or c.endswith("_opp")]
+    return logs.drop(columns=drop)
+
 
 def load_game_logs(logs_dir: Path = LOGS_DIR, kinds: Sequence[str] = CAREER_KINDS) -> pd.DataFrame:
     frames = []
@@ -38,7 +79,7 @@ def load_game_logs(logs_dir: Path = LOGS_DIR, kinds: Sequence[str] = CAREER_KIND
         season, kind = pq.stem.split("_", 1)
         if kind not in kinds:
             continue
-        df = pd.read_parquet(pq, columns=["PLAYER_ID", "GAME_DATE"] + LOG_COLS)
+        df = pd.read_parquet(pq, columns=["PLAYER_ID", "TEAM_ID", "GAME_ID", "GAME_DATE"] + LOG_COLS)
         df["kind"] = kind
         frames.append(df)
     logs = pd.concat(frames, ignore_index=True)
@@ -47,6 +88,7 @@ def load_game_logs(logs_dir: Path = LOGS_DIR, kinds: Sequence[str] = CAREER_KIND
     logs["player_id"] = logs["player_id"].astype(int)
     for c in LOG_COLS:
         logs[c] = pd.to_numeric(logs[c], errors="coerce").fillna(0.0).astype(np.float64)
+    logs = _share_denominators(logs)
     return logs.drop(columns="GAME_DATE").sort_values("date").reset_index(drop=True)
 
 
@@ -107,11 +149,16 @@ def build_prior_features(
     logs: pd.DataFrame | None = None,
     static: pd.DataFrame | None = None,
     shrink_minutes: float = 0.0,
+    feature_set: str = "v1",
     verbose: bool = True,
 ) -> dict[pd.Timestamp, np.ndarray]:
-    """Feature matrix (n_players + 1, len(FEATURES)) per origin; row 0 (UNKNOWN) is zeros.
+    """Feature matrix (n_players + 1, len(FEATURE_SETS[feature_set])) per origin;
+    row 0 (UNKNOWN) is zeros.
 
     Rows follow ``player_idx`` so the matrix lines up with the ridge coefficients.
+    ``feature_set`` "v1" is the phase-1 set (FEATURES); "v2" appends the
+    on-court share statistics (RATE_FEATURES), career to date plus usage over
+    the past 365 days.
 
     ``shrink_minutes`` > 0 shrinks every rate and percentage toward the
     league value as of the origin by adding that many minutes of
@@ -121,6 +168,8 @@ def build_prior_features(
     """
     logs = load_game_logs() if logs is None else logs
     static = static_features(vocab) if static is None else static
+    columns = FEATURE_SETS[feature_set]
+    sum_cols = LOG_COLS + [c for c in SHARE_COLS if c in logs.columns]
     ids = vocab["player_id"].astype(int).values
     idxs = vocab["player_idx"].astype(int).values
     n_players = len(vocab) + 1
@@ -128,32 +177,34 @@ def build_prior_features(
     year = pd.Timedelta(days=365)
 
     out: dict[pd.Timestamp, np.ndarray] = {}
-    for k, t in enumerate(origins):
+    for step, t in enumerate(origins):
         t = pd.Timestamp(t)
         hist = logs.iloc[:np.searchsorted(dates, np.datetime64(t))]
-        cum = hist.groupby("player_id")[LOG_COLS].sum()
+        cum = hist.groupby("player_id")[sum_cols].sum()
         cum["games"] = hist.groupby("player_id").size()
         recent = hist.iloc[np.searchsorted(hist["date"].values, np.datetime64(t - year)):]
-        rec = recent.groupby("player_id")["MIN"].agg(min_last365="sum", games_last365="size")
+        rec = recent.groupby("player_id").agg(min_last365=("MIN", "sum"), games_last365=("MIN", "size"),
+                                              **({"n_usg": ("n_usg", "sum"), "d_usg": ("d_usg", "sum")}
+                                                 if "n_usg" in recent else {}))
         c = cum.reindex(ids).fillna(0.0)
         r = rec.reindex(ids).fillna(0.0)
 
         minutes = c["MIN"].values
         games = c["games"].values
         has = minutes > 0
-        k = float(shrink_minutes)
-        if k > 0 and len(hist):
-            # League totals as of the origin; k minutes of league-average play
-            # are added to every player's totals before any rate is formed.
-            L = hist[LOG_COLS].sum()
-            L_tsa = L["FGA"] + 0.44 * L["FTA"]
-            lg = {col: L[col] / max(L["MIN"], 1e-9) for col in LOG_COLS}      # per-minute league rates
-            tot = {col: c[col].values + k * lg[col] for col in LOG_COLS}
-            denom = minutes + k
+        kappa = float(shrink_minutes)
+        L = hist[sum_cols].sum() if len(hist) else None
+        if kappa > 0 and len(hist):
+            # League totals as of the origin; kappa minutes of league-average
+            # play are added to every player's totals before any rate is formed.
+            lg = {col: L[col] / max(L["MIN"], 1e-9) for col in sum_cols}      # per-minute league rates
+            tot = {col: c[col].values + kappa * lg[col] for col in sum_cols}
+            denom = minutes + kappa
         else:
-            tot = {col: c[col].values for col in LOG_COLS}
+            lg = None
+            tot = {col: c[col].values for col in sum_cols}
             denom = np.maximum(minutes, 1e-9)
-        per36 = lambda col: np.where(has | (k > 0), 36 * tot[col] / denom, 0.0)
+        per36 = lambda col: np.where(has | (kappa > 0), 36 * tot[col] / denom, 0.0)
         fga, fta, fg3a = tot["FGA"], tot["FTA"], tot["FG3A"]
         ts_den = 2 * (fga + 0.44 * fta)
         f = pd.DataFrame(index=ids)
@@ -193,9 +244,18 @@ def build_prior_features(
             f[col] = static[col].reindex(ids).values
         f["size_missing"] = (f["height_in"].values <= 0).astype(float)
 
-        mat = np.zeros((n_players, len(FEATURES)), dtype=np.float32)
-        mat[idxs] = f[FEATURES].values.astype(np.float32)
+        if feature_set != "v1":
+            for name, (nc, dc) in SHARE_STATS.items():
+                num, den = tot[nc], tot[dc]
+                f[f"{name}_pct"] = np.where(den > 0, num / np.maximum(den, 1e-9), 0.0)
+            n_r, d_r = r["n_usg"].values, r["d_usg"].values
+            if lg is not None:
+                n_r, d_r = n_r + kappa * lg["n_usg"], d_r + kappa * lg["d_usg"]
+            f["usg_pct_365"] = np.where(d_r > 0, n_r / np.maximum(d_r, 1e-9), 0.0)
+
+        mat = np.zeros((n_players, len(columns)), dtype=np.float32)
+        mat[idxs] = f[columns].values.astype(np.float32)
         out[t] = mat
-        if verbose and ((k + 1) % max(1, len(origins) // 5) == 0 or k == len(origins) - 1):
-            print(f"  prior features [{k + 1}/{len(origins)}] {t.date()}", flush=True)
+        if verbose and ((step + 1) % max(1, len(origins) // 5) == 0 or step == len(origins) - 1):
+            print(f"  prior features [{step + 1}/{len(origins)}] {t.date()}", flush=True)
     return out

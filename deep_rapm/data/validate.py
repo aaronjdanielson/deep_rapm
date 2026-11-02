@@ -21,6 +21,11 @@ Three layers of checks:
   without event-level data: a player wrongly left on the floor shows up as
   tens of extra minutes.
 
+A fourth, event-level layer works on a single pbpstats-parsed game
+(``validate_game``: every player who acts is in his team's lineup;
+``compute_player_seconds``: exact on-court seconds from lineup changes). It
+is used by tests/test_possessions.py.
+
 Usage
 -----
     from deep_rapm.data.validate import validate_corpus
@@ -29,7 +34,9 @@ Usage
 
 from __future__ import annotations
 
+import re
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
@@ -400,3 +407,243 @@ def validate_corpus(
     q["severity"] = np.where(q["errors"].map(len) > 0, "error",
                              np.where(q["warnings"].map(len) > 0, "warn", "ok"))
     return q
+
+
+# ---------------------------------------------------------------------------
+# Event-level checks on one pbpstats-parsed game
+# ---------------------------------------------------------------------------
+
+_CLOCK_RE = re.compile(r"PT(\d+)M([\d.]+)S")
+
+
+def _clock_to_sig(period: int, clock: str) -> float:
+    """Convert period + clock string to seconds elapsed since tip-off."""
+    m = _CLOCK_RE.match(str(clock))
+    if m:
+        sr = int(m.group(1)) * 60 + float(m.group(2))
+    else:
+        parts = str(clock).split(":")
+        sr = float(parts[0]) * 60 + float(parts[1]) if len(parts) == 2 else 0.0
+    if period <= 4:
+        return (period - 1) * 720 + (720 - sr)
+    return 4 * 720 + (period - 5) * 300 + (300 - sr)
+
+
+@dataclass
+class PlayerOnCourtViolation:
+    game_id: str
+    event_num: int
+    event_type: int          # 1=FG, 2=miss, 3=FT, 4=reb, 5=TO, 6=foul
+    player_id: int
+    team_id: int
+    description: str
+    on_court_ids: frozenset  # all players in lineup at this event
+
+
+@dataclass
+class ValidationResult:
+    game_id: str
+    total_events: int
+    scored_events: int       # FG made + FT made
+    violations: list[PlayerOnCourtViolation] = field(default_factory=list)
+
+    @property
+    def passed(self) -> bool:
+        return len(self.violations) == 0
+
+    def summary(self) -> str:
+        lines = [
+            f"Game {self.game_id}: {self.total_events} events, "
+            f"{self.scored_events} scoring events",
+            f"  Violations: {len(self.violations)}",
+        ]
+        for v in self.violations[:10]:
+            lines.append(
+                f"  ✗ event {v.event_num} type={v.event_type} "
+                f"player={v.player_id} team={v.team_id}: {v.description}"
+            )
+        if len(self.violations) > 10:
+            lines.append(f"  … and {len(self.violations) - 10} more")
+        return "\n".join(lines)
+
+
+def _load_pbp(game_id: str, pbp_cache_dir: Optional[Path], max_retries: int):
+    """pbpstats enhanced play-by-play for one game, from the file cache when present."""
+    from pbpstats.data_loader import DataNbaEnhancedPbpFileLoader, DataNbaEnhancedPbpLoader
+
+    from .game import _PatchedEnhancedPbpWebLoader
+
+    cache_str = str(pbp_cache_dir) if pbp_cache_dir is not None else None
+    for attempt in range(max_retries):
+        try:
+            if attempt > 0:
+                time.sleep(2 ** attempt)
+            cached_path = None
+            if pbp_cache_dir is not None:
+                cached_path = Path(pbp_cache_dir) / "pbp" / f"data_{game_id}.json"
+            if cached_path is not None and cached_path.exists():
+                source_loader = DataNbaEnhancedPbpFileLoader(cache_str)
+            else:
+                if pbp_cache_dir is not None:
+                    (Path(pbp_cache_dir) / "pbp").mkdir(parents=True, exist_ok=True)
+                source_loader = _PatchedEnhancedPbpWebLoader(cache_str)
+            return DataNbaEnhancedPbpLoader(game_id, source_loader)
+        except Exception:
+            if attempt == max_retries - 1:
+                raise
+
+
+def validate_game(
+    game_id: str,
+    pbp_cache_dir: Optional[Path] = None,
+    max_retries: int = 3,
+) -> ValidationResult:
+    """
+    Verify that every scoring/acting player is present in lineup_ids.
+
+    Checks all events where a specific player is recorded:
+      - event_type 1/2 : player1_id is shooter (FG made / missed)
+      - event_type 3   : player1_id is FT shooter
+      - event_type 4   : player1_id is rebounder
+      - event_type 5   : player1_id is player who turned it over
+      - event_type 6   : player1_id is player who committed the foul
+
+    For each, we verify player1_id is in lineup_ids[team_id] at that event.
+    """
+    pbp = _load_pbp(game_id, pbp_cache_dir, max_retries)
+    acting_types = {1, 2, 3, 4, 5, 6}
+
+    violations: list[PlayerOnCourtViolation] = []
+    total_events = 0
+    scored_events = 0
+
+    for event in pbp.items:
+        total_events += 1
+        etype = getattr(event, "event_type", None)
+        if etype not in acting_types:
+            continue
+
+        player_id = getattr(event, "player1_id", None)
+        team_id = getattr(event, "team_id", None)
+        lineup = getattr(event, "lineup_ids", {}) or {}
+        description = getattr(event, "description", "")
+        event_num = getattr(event, "event_num", -1)
+
+        if not player_id or not team_id or not lineup:
+            continue
+
+        # Team-level events (e.g. delay-of-game, bench technical) set
+        # player1_id == team_id.  There is no individual player to check.
+        if player_id == team_id:
+            continue
+
+        # Coach/staff technicals have a real person ID but that person is not
+        # in any lineup (they're on the sideline).  Skip if the player doesn't
+        # appear in either team's lineup string at this event.
+        all_on_court = set()
+        for s in lineup.values():
+            if s:
+                all_on_court.update(int(p) for p in s.split("-"))
+        if player_id not in all_on_court:
+            continue
+
+        lineup_str = lineup.get(team_id, "")
+        if not lineup_str:
+            # Team not present in lineup_ids — skip (happens for start-of-period)
+            continue
+
+        on_court = frozenset(int(p) for p in lineup_str.split("-"))
+
+        if etype in (1, 3) and getattr(event, "is_made", False):
+            scored_events += 1
+
+        if player_id not in on_court:
+            violations.append(
+                PlayerOnCourtViolation(
+                    game_id=game_id,
+                    event_num=event_num,
+                    event_type=etype,
+                    player_id=player_id,
+                    team_id=team_id,
+                    description=description,
+                    on_court_ids=on_court,
+                )
+            )
+
+    return ValidationResult(
+        game_id=game_id,
+        total_events=total_events,
+        scored_events=scored_events,
+        violations=violations,
+    )
+
+
+def compute_player_seconds(
+    game_id: str,
+    pbp_cache_dir: Optional[Path] = None,
+    max_retries: int = 3,
+) -> dict[int, float]:
+    """
+    Compute exact on-court seconds for every player in a game.
+
+    Tracks when each player enters and leaves the court by monitoring changes
+    in ``lineup_ids`` across consecutive pbpstats events.  Uses game-clock
+    time (seconds elapsed since tip-off), matching the same measure used by
+    the official boxscore minutes column.
+
+    Returns
+    -------
+    dict mapping player_id (int) → seconds on court (float).
+    """
+    pbp = _load_pbp(game_id, pbp_cache_dir, max_retries)
+
+    player_seconds: dict[int, float] = {}
+    player_entry: dict[int, float] = {}   # player_id → sig when they came on
+    prev_lineups: dict = {}               # team_id → frozenset of player_ids
+    prev_sig: float = 0.0
+
+    for event in pbp.items:
+        period = getattr(event, "period", 0)
+        clock = getattr(event, "clock", "PT12M00.00S")
+        lineup = getattr(event, "lineup_ids", {}) or {}
+
+        if not lineup:
+            continue
+
+        sig = _clock_to_sig(period, clock)
+
+        curr_lineups: dict = {}
+        for tid, s in lineup.items():
+            if s:
+                curr_lineups[tid] = frozenset(int(p) for p in s.split("-"))
+
+        # First event with valid data: all visible players just entered
+        if not prev_lineups:
+            for players in curr_lineups.values():
+                for pid in players:
+                    player_entry[pid] = sig
+            prev_lineups = curr_lineups
+            prev_sig = sig
+            continue
+
+        for tid in set(curr_lineups) | set(prev_lineups):
+            prev = prev_lineups.get(tid, frozenset())
+            curr = curr_lineups.get(tid, frozenset())
+
+            for pid in prev - curr:          # left the court
+                if pid in player_entry:
+                    player_seconds[pid] = (
+                        player_seconds.get(pid, 0.0) + sig - player_entry.pop(pid)
+                    )
+
+            for pid in curr - prev:          # entered the court
+                player_entry[pid] = sig
+
+        prev_lineups = curr_lineups
+        prev_sig = sig
+
+    # Flush anyone still on court at the final event
+    for pid, entry_sig in player_entry.items():
+        player_seconds[pid] = player_seconds.get(pid, 0.0) + prev_sig - entry_sig
+
+    return player_seconds
